@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#15121f">
+<meta name="description" content="Splendor — board game đá quý thời Phục hưng, chơi một người với máy hoặc nhiều người trên cùng thiết bị. Chạy trực tiếp trong trình duyệt.">
+<title>Splendor</title>
+<link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="assets/css/style.css">
+</head>
+<body>
+
+<!-- ─────────────────────────────  MENU  ───────────────────────────── -->
+<section id="screen-menu" class="screen is-active">
+  <div class="menu-wrap">
+    <header class="menu-head">
+      <h1 class="logo">Splendor</h1>
+      <p class="tagline" data-i18n="app.tagline"></p>
+      <div class="lang-switch" role="group" aria-label="Language">
+        <button type="button" class="lang-btn" data-lang="vi">VI</button>
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+      </div>
+    </header>
+
+    <div class="mode-grid">
+      <button type="button" class="mode-card" data-mode="single">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><circle cx="16" cy="17" r="7"/><path d="M4 42c0-7 5.4-12 12-12s12 5 12 12z"/><rect x="30" y="14" width="14" height="20" rx="3" class="o"/><circle cx="34.5" cy="20" r="1.6" class="d"/><circle cx="39.5" cy="20" r="1.6" class="d"/><path d="M34 27h7" class="s"/></svg>
+        </span>
+        <strong data-i18n="menu.single"></strong>
+        <small data-i18n="menu.single.desc"></small>
+      </button>
+      <button type="button" class="mode-card" data-mode="multi">
+        <span class="mode-icon" aria-hidden="true">
+          <svg viewBox="0 0 48 48"><circle cx="14" cy="16" r="6"/><path d="M3 40c0-6.3 4.9-11 11-11s11 4.7 11 11z"/><circle cx="33" cy="16" r="6"/><path d="M22 40c0-6.3 4.9-11 11-11s11 4.7 11 11z" class="o2"/></svg>
+        </span>
+        <strong data-i18n="menu.multi"></strong>
+        <small data-i18n="menu.multi.desc"></small>
+      </button>
+    </div>
+
+    <form id="setup" class="setup" hidden>
+      <h2 id="setup-title" class="setup-title"></h2>
+
+      <div class="field">
+        <span class="field-label" data-i18n="menu.players"></span>
+        <div class="seg" id="count-seg" role="group"></div>
+      </div>
+
+      <div class="field" id="difficulty-field">
+        <span class="field-label" data-i18n="menu.difficulty"></span>
+        <div class="seg" id="difficulty-seg" role="group"></div>
+      </div>
+
+      <div class="field">
+        <span class="field-label" data-i18n="menu.names"></span>
+        <div class="names" id="names"></div>
+      </div>
+
+      <div class="field">
+        <span class="field-label" data-i18n="menu.speed"></span>
+        <div class="seg" id="speed-seg" role="group"></div>
+      </div>
+
+      <label class="check" id="privacy-row">
+        <input type="checkbox" id="privacy-toggle">
+        <span>
+          <strong data-i18n="menu.privacy"></strong>
+          <small data-i18n="menu.privacy.hint"></small>
+        </span>
+      </label>
+
+      <div class="setup-actions">
+        <button type="button" class="btn btn-ghost" id="setup-back" data-i18n="menu.back"></button>
+        <button type="submit" class="btn btn-primary" id="start-btn" data-i18n="menu.start"></button>
+      </div>
+    </form>
+
+    <div class="menu-extra">
+      <button type="button" class="btn btn-gold" id="resume-btn" hidden data-i18n="menu.resume"></button>
+      <button type="button" class="btn btn-ghost" id="rules-btn" data-i18n="menu.rules"></button>
+    </div>
+    <p class="credit">Fan-made, open-source implementation of the board game Splendor. Không liên kết với nhà phát hành.</p>
+  </div>
+</section>
+
+<!-- ─────────────────────────────  GAME  ───────────────────────────── -->
+<section id="screen-game" class="screen">
+  <header class="topbar">
+    <button type="button" class="icon-btn" id="menu-btn" aria-label="Menu">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+    </button>
+    <div class="turn-info">
+      <span class="round-chip" id="round-chip"></span>
+      <span class="turn-name" id="turn-name"></span>
+    </div>
+    <div class="topbar-right">
+      <span class="final-chip" id="final-chip" hidden data-i18n="game.finalRound"></span>
+      <button type="button" class="icon-btn" id="log-btn" aria-label="Log">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5h14M5 10h14M5 15h9"/><circle cx="18" cy="16" r="3"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <main class="table" id="table">
+    <section class="panel nobles-panel">
+      <h2 class="panel-title"><span data-i18n="game.nobles"></span></h2>
+      <div class="nobles" id="nobles"></div>
+    </section>
+
+    <section class="tiers" id="tiers"></section>
+
+    <section class="panel bank-panel">
+      <h2 class="panel-title"><span data-i18n="game.bank"></span></h2>
+      <div class="bank" id="bank"></div>
+      <p class="hint" id="take-hint" data-i18n="action.takeHint"></p>
+    </section>
+
+    <section class="panel players-panel">
+      <h2 class="panel-title"><span data-i18n="game.players"></span></h2>
+      <div class="players" id="players"></div>
+    </section>
+  </main>
+
+  <footer class="tray" id="tray"></footer>
+</section>
+
+<!-- overlays -->
+<div id="modal-root" class="modal-root" hidden></div>
+<div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="false"></div>
+
+<script src="assets/js/data.js"></script>
+<script src="assets/js/i18n.js"></script>
+<script src="assets/js/engine.js"></script>
+<script src="assets/js/ai.js"></script>
+<script src="assets/js/ui.js"></script>
+<script src="assets/js/app.js"></script>
+</body>
+</html>

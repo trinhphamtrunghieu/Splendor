@@ -1,0 +1,14 @@
+{
+  "name": "Splendor",
+  "short_name": "Splendor",
+  "description": "Splendor board game — single player vs bots or pass-and-play multiplayer, in the browser.",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0c0a12",
+  "theme_color": "#15121f",
+  "icons": [
+    { "src": "assets/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}
