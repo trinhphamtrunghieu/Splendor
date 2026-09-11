@@ -916,7 +916,11 @@
       // discard/noble prompts must not be replaceable from underneath.
       if (UI.isModalOpen()) return;
       if (event.target.closest('#menu-btn')) { UI.menuModal(state); return; }
+      if (event.target.closest('#nobles-btn')) { UI.noblesModal(state, viewerSeat()); return; }
       if (event.target.closest('#log-btn')) { UI.logModal(state); return; }
+
+      var sheet = event.target.closest('[data-sheet]');
+      if (sheet) { openSheet(sheet.dataset.sheet); return; }
 
       var token = event.target.closest('[data-token]');
       if (token) { toggleToken(token.dataset.token); return; }
@@ -945,6 +949,23 @@
       var deck = event.target.closest('[data-deck]');
       if (deck) { UI.deckDetail(state, +deck.dataset.deck); return; }
     });
+
+    /* The nobles strip and the score chips are plain elements standing in for
+       buttons, so the keyboard has to be wired by hand: focusable without
+       being activatable is worse than not focusable at all. */
+    $('screen-game').addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (UI.isModalOpen() || !App.state) return;
+      var sheet = event.target.closest('[data-sheet]');
+      if (!sheet) return;
+      event.preventDefault();
+      openSheet(sheet.dataset.sheet);
+    });
+  }
+
+  function openSheet(name) {
+    if (name === 'nobles') UI.noblesModal(App.state, viewerSeat());
+    else UI.playersModal(App.state, viewerSeat());
   }
 
   function wireModal() {

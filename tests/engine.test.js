@@ -443,6 +443,49 @@ check('the markup has exactly one screen marked active to begin with', function 
   eq(active.length, 1, 'exactly one screen may start active, found: ' + active.join(', '));
 });
 
+console.log('\nphone layout');
+
+check('the phone board is built from tracks that can actually shrink', function () {
+  /* A plain 1fr is minmax(auto, 1fr): the card rows refused to shrink below
+     their content and pushed the third tier off the screen. Definite heights
+     need minmax(0, 1fr) the whole way down the chain. */
+  var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
+  var phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  eq(/grid-template-rows:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(phone), true,
+    'the three tiers must share the leftover height');
+  eq(/grid-template-columns:\s*repeat\(4,\s*minmax\(0,\s*1fr\)\)/.test(phone), true,
+    'the four face-up cards must share the row width');
+});
+
+check('everything hidden on a phone has a way back', function () {
+  /* The players panel and the nobles strip come off the phone board to make
+     room. Each must be reachable by a tap instead of simply being gone. */
+  var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
+  var html = require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
+  var ui = require('fs').readFileSync(__dirname + '/../assets/js/ui.js', 'utf8');
+
+  assert(/\.players-panel\s*\{\s*display:\s*none/.test(css.slice(css.indexOf('@media (max-width: 700px)'))),
+    'the players panel is meant to be hidden on phones');
+  assert(html.indexOf('id="nobles-btn"') > 0, 'phones need a button that opens the nobles');
+  assert(ui.indexOf('function noblesModal') > 0, 'the nobles sheet must exist');
+  assert(ui.indexOf('function playersModal') > 0, 'the players sheet must exist');
+  assert(/data-sheet="players"/.test(ui), 'the score chips must open the players sheet');
+});
+
+check('a message arriving while a sheet is open goes inside it', function () {
+  /* A dialog fills a phone screen, so a floating toast landed on top of the
+     very text it was commenting on. */
+  var ui = require('fs').readFileSync(__dirname + '/../assets/js/ui.js', 'utf8');
+  var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
+  var body = ui.slice(ui.indexOf('function toast('), ui.indexOf('function modalNotice('));
+  assert(/if\s*\(isModalOpen\(\)\)\s*\{\s*modalNotice\(/.test(body),
+    'toast() must hand off to the dialog when one is open');
+  assert(ui.indexOf('function modalNotice') > 0, 'the in-dialog notice must exist');
+  assert(/\.modal-notice\s*\{/.test(css), 'the notice needs styling');
+  assert(css.indexOf('body.has-modal .toast-root') < 0,
+    'the old move-the-toast-aside rule cannot fit a dialog that fills the screen');
+});
+
 console.log('\nMQTT wire format');
 
 check('remaining-length varints round-trip across every byte boundary', function () {

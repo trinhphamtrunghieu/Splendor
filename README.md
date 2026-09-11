@@ -39,8 +39,14 @@ trade-offs are.
 - A turn line above the tray always says whose turn it is — *Your turn*, *Waiting for Lan…*,
   *Bot 1 is thinking…* — and the gem bank is locked, visibly, whenever it is not yours, rather
   than letting you pick gems up and refusing them on confirm.
-- Responsive from a 320px phone to a wide desktop: on phones the board scrolls and the
-  current player's tray is docked to the bottom; on desktop the whole board fits on screen.
+- **The whole board fits on one phone screen, with nothing to scroll.** All three card rows,
+  the bank and your tray are visible at once from 320px up: the four face-up cards and the
+  deck counter are sized from the viewport width, the rows share the leftover height, and
+  the bank collapses to a single row of tokens. What does not fit on a phone moves behind a
+  tap instead of being cut off — the crown button in the top bar opens the nobles, and the
+  score chips on the turn line open a sheet with every player's gems, cards and nobles.
+  A message arriving while a sheet is open (a bot's move, a player leaving) is printed
+  inside the sheet rather than floating over the text you are reading.
 - Three bot strengths. The bots evaluate every legal move one ply deep, weighing prestige
   points, permanent discounts, progress towards nobles and what they hand the opponent.
 - Interface in **Vietnamese and English**, switchable at any time.
@@ -323,8 +329,14 @@ cũng không cần server nào của chúng ta — xem phần *Chơi qua mạng*
 - Một dòng ngay trên khay luôn cho biết đang là lượt của ai — *Lượt của bạn*, *Đang chờ Lan…*,
   *Máy 1 đang suy nghĩ…* — và ngân hàng đá quý bị khoá (mờ đi rõ ràng) khi chưa tới lượt bạn,
   thay vì cho chọn rồi mới báo lỗi lúc xác nhận.
-- Giao diện tương thích cả điện thoại và máy tính: trên điện thoại bàn chơi cuộn được và khay
-  của người đang chơi luôn nằm dưới cùng; trên máy tính toàn bộ bàn hiện trong một màn hình.
+- **Trên điện thoại cả bàn chơi nằm gọn trong một màn hình, không phải cuộn.** Từ màn hình
+  rộng 320px trở lên, ba hàng thẻ, ngân hàng và khay của bạn đều hiện cùng lúc: bốn thẻ mở và
+  ô đếm chồng thẻ được tính theo chiều rộng màn hình, ba hàng chia đều phần cao còn lại, và
+  ngân hàng gom thành một hàng token. Thứ không đủ chỗ thì nằm sau một cú bấm chứ không bị
+  cắt mất — nút vương miện trên thanh trên cùng mở danh sách quý tộc, còn các ô điểm trên dòng
+  lượt chơi mở bảng xem đá quý, thẻ và quý tộc của từng người. Nếu có thông báo đến lúc đang
+  mở bảng (máy vừa đi, có người rời phòng) thì nó hiện ngay trong bảng, không che chữ bạn
+  đang đọc.
 - Máy chơi ở ba mức độ, cân nhắc điểm uy tín, chiết khấu lâu dài, tiến độ tới quý tộc và cả
   việc để lộ thẻ tốt cho đối thủ.
 - Giao diện **Tiếng Việt và English**, đổi lúc nào cũng được.

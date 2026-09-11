@@ -201,6 +201,26 @@
         }).join('')
       : '<span class="empty-note">' + t('game.noReserved') + '</span>';
 
+    /* Only the groups that have something in them: three columns of "—" is
+       noise, and on a phone it is noise that costs the board real height. */
+    var held = E.countTokens(player.tokens);
+    var groups = [];
+    if (player.cards.length) {
+      groups.push('<div class="tray-group"><span class="tray-label">' + t('game.bonuses') + '</span>' +
+        '<div class="tray-row">' + bonusRow(player) + '</div></div>');
+    }
+    if (held) {
+      /* The ten-token limit makes this count worth showing at every size. */
+      groups.push('<div class="tray-group"><span class="tray-count' +
+        (held >= D.MAX_TOKENS ? ' is-full' : '') + '">💎 ' + held + '/' + D.MAX_TOKENS + '</span>' +
+        '<div class="tray-row">' + tokenRow(player) + '</div></div>');
+    }
+    if (player.reserved.length) {
+      groups.push('<div class="tray-group tray-reserved"><span class="tray-count">' +
+        t('game.reserved') + ' ' + player.reserved.length + '/' + D.MAX_RESERVED + '</span>' +
+        '<div class="tray-row">' + reserved + '</div></div>');
+    }
+
     root.innerHTML =
       '<div class="tray-head">' +
         '<span class="player-dot" style="background:' + PLAYER_COLORS[seat % 4] + '"></span>' +
@@ -209,12 +229,7 @@
         '<span class="tray-pts">' + player.points + ' ' + t('game.points') + '</span>' +
       '</div>' +
       '<div class="tray-groups">' +
-        '<div class="tray-group"><span class="tray-label">' + t('game.bonuses') + '</span>' +
-          '<div class="tray-row">' + bonusRow(player) + '</div></div>' +
-        '<div class="tray-group"><span class="tray-label">💎 ' + E.countTokens(player.tokens) + '/' + D.MAX_TOKENS + '</span>' +
-          '<div class="tray-row">' + tokenRow(player) + '</div></div>' +
-        '<div class="tray-group"><span class="tray-label">' + t('game.reserved') + ' ' + player.reserved.length + '/' + D.MAX_RESERVED + '</span>' +
-          '<div class="tray-row">' + reserved + '</div></div>' +
+        (groups.length ? groups.join('') : '<span class="empty-note">' + t('tray.empty') + '</span>') +
       '</div>' +
       (interactive && pickCount && tokenError && tokenError !== 'empty'
         ? '<p class="hint">' + escapeHtml(t(tokenError)) + '</p>' : '') +
@@ -265,7 +280,88 @@
     root.innerHTML =
       '<span class="turn-dot" style="background:' + colour + '"></span>' +
       '<span class="turn-text">' + label + '</span>' +
-      (hint ? '<span class="turn-hint">' + hint + '</span>' : '');
+      (hint ? '<span class="turn-hint">' + hint + '</span>' : '') +
+      scoreStrip(state, opts.viewer);
+  }
+
+  /* Every player's score in one tappable row: on a phone this replaces the
+     side panel, so you can still see who is ahead without leaving the board. */
+  function scoreStrip(state, viewer) {
+    var chips = state.players.map(function (player, index) {
+      var classes = ['score-chip'];
+      if (index === state.current && state.phase !== 'gameover') classes.push('is-turn');
+      if (index === viewer) classes.push('is-you');
+      return '<span class="' + classes.join(' ') + '">' +
+        '<i style="background:' + PLAYER_COLORS[index % 4] + '"></i>' + player.points + '</span>';
+    }).join('');
+    return '<button type="button" class="turn-scores" data-sheet="players" ' +
+      'aria-label="' + escapeHtml(t('game.players')) + '">' + chips + '</button>';
+  }
+
+  /* The nobles at full size: on a phone the strip shows only points and
+     requirements, so this is where the who and the how-far-off live. */
+  function noblesModal(state, viewer) {
+    var player = state.players[viewer == null ? state.current : viewer];
+    var rows = state.nobles.map(function (noble) {
+      var ready = Object.keys(noble.req).every(function (c) {
+        return (player.bonuses[c] || 0) >= noble.req[c];
+      });
+      var needs = Object.keys(noble.req).map(function (color) {
+        var have = Math.min(player.bonuses[color] || 0, noble.req[color]);
+        return pip(color, have + '/' + noble.req[color], have >= noble.req[color], true);
+      }).join('');
+      var url = Art.nobleImage(noble.id);
+      return '<div class="noble-row' + (ready ? ' is-ready' : '') + '">' +
+        (url ? '<img class="noble-face" src="' + url + '" alt="" loading="lazy">'
+             : '<span class="noble-face noble-face--blank">' +
+               escapeHtml((D.NOBLE_NAMES[noble.id] || '?').charAt(0)) + '</span>') +
+        '<span class="noble-row-main">' +
+          '<b>' + escapeHtml(D.NOBLE_NAMES[noble.id] || '') + '</b>' +
+          '<span class="noble-row-req">' + needs + '</span>' +
+        '</span>' +
+        '<span class="noble-row-pts">' + noble.points + '</span>' +
+        '</div>';
+    }).join('') || '<p class="empty-note">—</p>';
+
+    return modal(
+      '<h2 class="modal-title">' + t('game.nobles') + '</h2>' +
+      '<p class="modal-body">' + t('rules.noble.p') + '</p>' +
+      '<div class="noble-rows">' + rows + '</div>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-primary" data-close="1">' +
+        t('action.cancel') + '</button></div>');
+  }
+
+  /* Everyone's board, for when the phone has no room to show it beside the game. */
+  function playersModal(state, viewer) {
+    var best = Math.max.apply(null, state.players.map(function (p) { return p.points; }));
+    var rows = state.players.map(function (player, index) {
+      var tags = [];
+      if (index === viewer) tags.push(t('game.you'));
+      if (player.type === 'ai') tags.push(t('game.ai'));
+      if (index === state.current && state.phase !== 'gameover') tags.push(t('turn.onTurn'));
+      return '<div class="sheet-player' + (player.points === best && best > 0 ? ' is-leader' : '') + '">' +
+        '<div class="player-head">' +
+          '<span class="player-dot" style="background:' + PLAYER_COLORS[index % 4] + '"></span>' +
+          '<span class="player-name">' + escapeHtml(player.name) + '</span>' +
+          (tags.length ? '<span class="player-tag">' + tags.join(' · ') + '</span>' : '') +
+          '<span class="player-pts">' + player.points + '</span>' +
+        '</div>' +
+        '<div class="player-stats">' +
+          '<span>' + player.cards.length + ' ' + t('game.cards') + '</span>' +
+          '<span>' + E.countTokens(player.tokens) + '/' + D.MAX_TOKENS + ' 💎</span>' +
+          '<span>' + player.reserved.length + '/' + D.MAX_RESERVED + ' ' + t('game.reserved').toLowerCase() + '</span>' +
+          (player.nobles.length ? '<span>' + player.nobles.length + ' 👑</span>' : '') +
+        '</div>' +
+        '<div class="player-row">' + bonusRow(player) + '</div>' +
+        '<div class="player-row">' + tokenRow(player) + '</div>' +
+        '</div>';
+    }).join('');
+
+    return modal(
+      '<h2 class="modal-title">' + t('game.players') + '</h2>' +
+      '<div class="sheet-players">' + rows + '</div>' +
+      '<div class="modal-actions"><button type="button" class="btn btn-primary" data-close="1">' +
+        t('action.cancel') + '</button></div>');
   }
 
   /* ------------------------------------------------------------ modals */
@@ -273,6 +369,7 @@
   var modalRoot = null;
   var onCloseHandler = null;
   var modalListeners = [];
+  var noticeTimer = null;
 
   /* Lets the tutorial coach marks step aside while a dialog owns the screen. */
   function onModalChange(fn) {
@@ -288,6 +385,7 @@
     modalRoot = modalRoot || document.getElementById('modal-root');
     modalRoot.innerHTML = '<div class="modal" role="dialog" aria-modal="true">' + html + '</div>';
     modalRoot.hidden = false;
+    document.body.classList.add('has-modal');
     onCloseHandler = options.onClose || null;
     modalRoot.dataset.dismissable = options.dismissable === false ? 'no' : 'yes';
     var focusable = modalRoot.querySelector('button, input, [tabindex]');
@@ -300,6 +398,8 @@
     modalRoot = modalRoot || document.getElementById('modal-root');
     modalRoot.hidden = true;
     modalRoot.innerHTML = '';
+    if (noticeTimer) { clearTimeout(noticeTimer); noticeTimer = null; }
+    document.body.classList.remove('has-modal');
     var handler = onCloseHandler;
     onCloseHandler = null;
     notifyModalChange();
@@ -506,6 +606,10 @@
   /* ------------------------------------------------------------ toasts */
 
   function toast(message, kind) {
+    /* A dialog can fill a phone screen, so a floating toast would land on top
+       of the very text it is commenting on. While one is open the message goes
+       inside it instead, right where the tap that triggered it happened. */
+    if (isModalOpen()) { modalNotice(message, kind); return; }
     var root = document.getElementById('toast-root');
     var node = document.createElement('div');
     node.className = 'toast' + (kind ? ' is-' + kind : '');
@@ -518,6 +622,26 @@
     while (root.children.length > 3) root.removeChild(root.firstChild);
   }
 
+  /* One notice line at the top of the open dialog. Replaced, never stacked:
+     the newest reason for a refused tap is the only one worth reading. */
+  function modalNotice(message, kind) {
+    var dialog = modalRoot && modalRoot.firstChild;
+    if (!dialog) return;
+    var node = dialog.querySelector('.modal-notice');
+    if (!node) {
+      node = document.createElement('div');
+      node.className = 'modal-notice';
+      node.setAttribute('role', 'status');
+      dialog.insertBefore(node, dialog.firstChild);
+    }
+    node.className = 'modal-notice' + (kind ? ' is-' + kind : '');
+    node.textContent = message;
+    if (noticeTimer) clearTimeout(noticeTimer);
+    noticeTimer = setTimeout(function () {
+      if (node.parentNode) node.parentNode.removeChild(node);
+    }, kind === 'error' ? 3200 : 2400);
+  }
+
   global.SplendorUI = {
     PLAYER_COLORS: PLAYER_COLORS,
     nobleFace: nobleFace,
@@ -528,6 +652,8 @@
     renderTiers: renderTiers,
     renderBank: renderBank,
     renderTurnLine: renderTurnLine,
+    noblesModal: noblesModal,
+    playersModal: playersModal,
     renderPlayers: renderPlayers,
     renderTray: renderTray,
     cardDetail: cardDetail,

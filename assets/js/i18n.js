@@ -39,6 +39,7 @@
       'turn.discarding': '{p} đang trả lại đá quý…',
       'turn.choosingNoble': '{p} đang chọn quý tộc…',
       'turn.over': 'Ván đã kết thúc',
+      'turn.onTurn': 'đang tới lượt',
       'turn.hint.play': 'Lấy đá quý, mua hoặc giữ thẻ.',
       'turn.hint.discard': 'Trả lại đá quý cho đủ 10 viên.',
       'turn.hint.noble': 'Chọn một quý tộc đến thăm.',
@@ -69,6 +70,7 @@
       'game.you': '(bạn)',
       'game.ai': 'Máy',
       'game.noReserved': 'Chưa giữ thẻ nào.',
+      'tray.empty': 'Bạn chưa có gì — lấy đá quý ở trên để bắt đầu.',
       'game.hidden': 'Đã giữ {n} thẻ (ẩn)',
 
       'action.take': 'Lấy {n} đá quý',
@@ -290,6 +292,7 @@
       'turn.discarding': '{p} is returning gems…',
       'turn.choosingNoble': '{p} is choosing a noble…',
       'turn.over': 'Game over',
+      'turn.onTurn': 'on turn',
       'turn.hint.play': 'Take gems, buy or reserve a card.',
       'turn.hint.discard': 'Return gems down to ten.',
       'turn.hint.noble': 'Pick a noble to visit you.',
@@ -320,6 +323,7 @@
       'game.you': '(you)',
       'game.ai': 'Bot',
       'game.noReserved': 'No reserved cards.',
+      'tray.empty': 'Nothing yet — take some gems above to get going.',
       'game.hidden': '{n} reserved (hidden)',
 
       'action.take': 'Take {n} gem(s)',
