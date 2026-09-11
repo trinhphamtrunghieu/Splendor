@@ -708,6 +708,43 @@ h1, h2, h3, p { margin: 0; }
 .bonus-chip .gem-ico { width: 14px; height: 14px; }
 .noble-mini { width: 16px; height: 16px; border-radius: 4px; background: linear-gradient(160deg, #efe6d2, #c0ac86); border: 1px solid #7d6a45; }
 
+/* ───────────────────────── whose turn it is ───────────────────────── */
+
+.turn-line {
+  flex: 0 0 auto;
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  background: var(--surface);
+  font-size: .85rem;
+  min-height: 38px;
+}
+.turn-line.is-mine {
+  background: linear-gradient(90deg, rgba(63, 191, 143, .16), rgba(63, 191, 143, .04) 60%, transparent);
+  border-top-color: rgba(63, 191, 143, .45);
+}
+.turn-line.is-waiting { background: var(--surface); }
+.turn-line.is-over { background: linear-gradient(90deg, rgba(232, 182, 76, .18), transparent); }
+
+.turn-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
+.turn-line.is-waiting .turn-dot { animation: turn-pulse 1.6s ease-in-out infinite; }
+@keyframes turn-pulse { 0%, 100% { opacity: 1 } 50% { opacity: .35 } }
+
+.turn-text { font-weight: 750; }
+.turn-line.is-mine .turn-text { color: var(--ok); }
+.turn-line.is-waiting .turn-text { color: var(--text); }
+.turn-line.is-over .turn-text { color: var(--gold); }
+.turn-hint { color: var(--muted-2); font-size: .76rem; }
+@media (max-width: 430px) {
+  .turn-line { font-size: .8rem; padding: 7px 10px; gap: 7px; }
+  .turn-hint { font-size: .7rem; }
+}
+@media (max-width: 360px) { .turn-hint { display: none; } }
+
+/* Gems you may not pick up should look it, not just refuse on confirm. */
+.bank.is-locked { opacity: .55; }
+.bank.is-locked .token { cursor: not-allowed; }
+
 /* ───────────────────────────── tray ───────────────────────────── */
 
 .tray {

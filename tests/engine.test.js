@@ -8,6 +8,7 @@ require('../assets/js/engine.js');
 require('../assets/js/ai.js');
 require('../assets/js/tutorial.js');
 require('../assets/js/art.js');
+require('../assets/js/i18n.js');
 require('../assets/js/mqtt-lite.js');
 require('../assets/js/net.js');
 var fetchArt = require('../tools/fetch-art.js');
@@ -18,6 +19,7 @@ var AI = window.SplendorAI;
 var Tut = window.SplendorTutorial;
 var Art = window.SplendorArt;
 var M = window.MqttLite;
+var I18n = window.SplendorI18n;
 var Net = window.SplendorNet;
 
 var passed = 0;
@@ -413,6 +415,24 @@ check('every screen change goes through the one helper', function () {
   eq(adHoc.length, inHelper.length,
     'app.js toggles is-active outside showScreen(): ' + adHoc.join(', '));
   assert(source.indexOf('function showScreen') > 0, 'showScreen must exist');
+});
+
+check('the turn line exists and is worded in both languages', function () {
+  var html = require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
+  assert(html.indexOf('id="turn-line"') > 0, 'index.html needs the turn line');
+  assert(/id="turn-line"[^>]*aria-live/.test(html),
+    'the turn line changes without a click, so it must be announced');
+
+  var keys = ['turn.yours', 'turn.yoursNamed', 'turn.waiting', 'turn.thinking',
+    'turn.discarding', 'turn.choosingNoble', 'turn.over',
+    'turn.hint.play', 'turn.hint.discard', 'turn.hint.noble', 'turn.hint.locked'];
+  ['vi', 'en'].forEach(function (lang) {
+    I18n.setLang(lang);
+    keys.forEach(function (key) {
+      assert(I18n.t(key) !== key, 'missing ' + lang + ':' + key);
+    });
+  });
+  I18n.setLang('vi');
 });
 
 check('the markup has exactly one screen marked active to begin with', function () {

@@ -122,13 +122,16 @@
     }).join('');
   }
 
-  function renderBank(root, state, picked) {
+  /* `enabled` is false when it is somebody else's turn: the gems are then not
+     merely refused on confirm, they cannot be picked up at all. */
+  function renderBank(root, state, picked, enabled) {
     var counts = {};
     picked.forEach(function (c) { counts[c] = (counts[c] || 0) + 1; });
+    root.classList.toggle('is-locked', enabled === false);
     root.innerHTML = D.ALL_TOKENS.map(function (color) {
       var left = state.tokens[color] - (counts[color] || 0);
       var isGold = color === 'gold';
-      var disabled = isGold || left <= 0;
+      var disabled = isGold || left <= 0 || enabled === false;
       return '<button type="button" class="token token--' + color + (counts[color] ? ' is-picked' : '') + '"' +
         ' data-token="' + color + '"' + (disabled ? ' disabled' : '') +
         ' aria-label="' + escapeHtml(t('gem.' + color)) + ': ' + left + '">' +
@@ -224,6 +227,45 @@
             (pickCount ? '<button type="button" class="btn btn-ghost btn-sm" id="clear-btn">' + t('action.clear') + '</button>' : '') +
           '</div>'
         : '');
+  }
+
+  /* One line that always says whose turn it is, and what you may do about it.
+     `opts`: { canAct, viewer, seatOfCurrent, waitingLabel } */
+  function renderTurnLine(root, state, opts) {
+    var current = state.players[state.current];
+    var mine = !!opts.canAct;
+    var colour = PLAYER_COLORS[state.current % 4];
+
+    if (state.phase === 'gameover') {
+      root.className = 'turn-line is-over';
+      root.innerHTML = '<span class="turn-text">' + t('turn.over') + '</span>';
+      return;
+    }
+
+    var label, hint = '';
+    if (mine) {
+      /* Around one device the name matters, because the wrong person could
+         otherwise take the turn; on your own screen "you" is clearer. */
+      label = opts.namedTurn ? t('turn.yoursNamed', { p: escapeHtml(current.name) }) : t('turn.yours');
+      hint = state.phase === 'discard' ? t('turn.hint.discard')
+        : state.phase === 'noble' ? t('turn.hint.noble')
+        : t('turn.hint.play');
+    } else if (current.type === 'ai') {
+      label = t('turn.thinking', { p: escapeHtml(current.name) });
+    } else if (state.phase === 'discard') {
+      label = t('turn.discarding', { p: escapeHtml(current.name) });
+    } else if (state.phase === 'noble') {
+      label = t('turn.choosingNoble', { p: escapeHtml(current.name) });
+    } else {
+      label = t('turn.waiting', { p: escapeHtml(current.name) });
+      hint = t('turn.hint.locked');
+    }
+
+    root.className = 'turn-line' + (mine ? ' is-mine' : ' is-waiting');
+    root.innerHTML =
+      '<span class="turn-dot" style="background:' + colour + '"></span>' +
+      '<span class="turn-text">' + label + '</span>' +
+      (hint ? '<span class="turn-hint">' + hint + '</span>' : '');
   }
 
   /* ------------------------------------------------------------ modals */
@@ -485,6 +527,7 @@
     renderNobles: renderNobles,
     renderTiers: renderTiers,
     renderBank: renderBank,
+    renderTurnLine: renderTurnLine,
     renderPlayers: renderPlayers,
     renderTray: renderTray,
     cardDetail: cardDetail,

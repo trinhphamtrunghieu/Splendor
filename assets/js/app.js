@@ -587,9 +587,16 @@
     $('final-chip').hidden = !state.finalRound || state.phase === 'gameover';
 
     var viewer = viewerSeat();
+    var myTurn = canAct() && state.phase !== 'gameover';
     UI.renderNobles($('nobles'), state, viewer);
     UI.renderTiers($('tiers'), state, null, viewer);
-    UI.renderBank($('bank'), state, App.picked);
+    UI.renderBank($('bank'), state, App.picked, myTurn);
+    UI.renderTurnLine($('turn-line'), state, {
+      canAct: myTurn,
+      viewer: viewer,
+      /* Hot seat: say the name, since the device is passed around. */
+      namedTurn: App.mode === 'multi' && humanCount(state) > 1
+    });
     UI.renderPlayers($('players'), state, {
       revealIndex: App.mode === 'online' ? viewer : (isHumanTurn ? state.current : -1),
       youIndex: App.mode === 'single' ? 0 : (App.mode === 'online' ? viewer : -1)
@@ -695,12 +702,15 @@
     step();
   }
 
-  /* Can the person at this screen act right now? */
+  /* Can the person at this screen act right now? Online that means the turn is
+     on their seat; offline it means the turn is on a human rather than a bot. */
   function canAct() {
     var state = App.state;
-    if (!state) return false;
-    if (App.mode !== 'online') return true;
-    return App.seat >= 0 && state.current === App.seat && !App.pending;
+    if (!state || state.phase === 'gameover') return false;
+    if (App.mode === 'online') {
+      return App.seat >= 0 && state.current === App.seat && !App.pending;
+    }
+    return E.currentPlayer(state).type === 'human';
   }
 
   /* Every move the local player makes goes through here: applied directly when
@@ -733,6 +743,10 @@
   function toggleToken(color) {
     var state = App.state;
     if (state.phase !== 'play' || E.currentPlayer(state).type !== 'human') return;
+    if (!canAct()) {                     // not your turn: the gems do not move
+      UI.toast(t('net.notYourTurn'), 'error');
+      return;
+    }
     var picked = App.picked;
     var mine = picked.filter(function (c) { return c === color; }).length;
     var allSame = picked.length > 1 && picked.every(function (c) { return c === picked[0]; });

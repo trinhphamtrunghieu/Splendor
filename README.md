@@ -36,6 +36,9 @@ trade-offs are.
   board costs one copy of the geometry. **Real photographs and paintings drop in on top**:
   `node tools/fetch-art.js` installs public-domain portraits of the ten historical figures
   the nobles are named after, plus free-licensed photos of cut stones.
+- A turn line above the tray always says whose turn it is — *Your turn*, *Waiting for Lan…*,
+  *Bot 1 is thinking…* — and the gem bank is locked, visibly, whenever it is not yours, rather
+  than letting you pick gems up and refusing them on confirm.
 - Responsive from a 320px phone to a wide desktop: on phones the board scrolls and the
   current player's tray is docked to the bottom; on desktop the whole board fits on screen.
 - Three bot strengths. The bots evaluate every legal move one ply deep, weighing prestige
@@ -317,6 +320,9 @@ cũng không cần server nào của chúng ta — xem phần *Chơi qua mạng*
   thật thì chỉ cần bỏ ảnh vào**: chạy `node tools/fetch-art.js` để tải tranh chân dung
   public-domain của 10 nhân vật lịch sử mà thẻ quý tộc được đặt tên theo, kèm ảnh đá quý có
   giấy phép tự do.
+- Một dòng ngay trên khay luôn cho biết đang là lượt của ai — *Lượt của bạn*, *Đang chờ Lan…*,
+  *Máy 1 đang suy nghĩ…* — và ngân hàng đá quý bị khoá (mờ đi rõ ràng) khi chưa tới lượt bạn,
+  thay vì cho chọn rồi mới báo lỗi lúc xác nhận.
 - Giao diện tương thích cả điện thoại và máy tính: trên điện thoại bàn chơi cuộn được và khay
   của người đang chơi luôn nằm dưới cùng; trên máy tính toàn bộ bàn hiện trong một màn hình.
 - Máy chơi ở ba mức độ, cân nhắc điểm uy tín, chiết khấu lâu dài, tiến độ tới quý tộc và cả
