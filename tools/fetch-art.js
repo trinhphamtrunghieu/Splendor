@@ -1,26 +1,4 @@
 #!/usr/bin/env node
-/* Splendor — download real images for the board.
- *
- * The repository ships drawn artwork only. This script fetches photographs and
- * paintings that are genuinely free to redistribute, writes them into
- * assets/img/, and rewrites assets/img/manifest.js so the game picks them up.
- *
- *   node tools/fetch-art.js              # nobles + gems
- *   node tools/fetch-art.js --nobles     # portraits only
- *   node tools/fetch-art.js --gems       # gem photographs only
- *   node tools/fetch-art.js --dry-run    # show what would be downloaded
- *
- * Sources are Wikipedia and Wikimedia Commons. Every candidate's licence is
- * read from the Commons API and anything that is not public domain or a free
- * CC/GFDL licence is refused — so nothing lands in the repository that cannot
- * be published with it. Credits are written to ATTRIBUTION.md.
- *
- * NOTE: the ten nobles of Splendor are named after real historical figures, so
- * portraits painted centuries ago are in the public domain. The retail game's
- * own card art is NOT: never add it here.
- *
- * Requires Node 18+ (for global fetch) and outbound HTTPS.
- */
 'use strict';
 
 const fs = require('fs');
@@ -29,11 +7,10 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const IMG_DIR = path.join(ROOT, 'assets', 'img');
 
+// Wikimedia yêu cầu User-Agent phải kèm email hoặc thông tin liên hệ rõ ràng
 const UA = process.env.SPLENDOR_UA ||
-  'SplendorWebFanProject/1.0 (github.com/trinhphamtrunghieu/Splendor; art fetch script)';
+  'SplendorWebArtFetcher/1.1 (https://github.com/trinhphamtrunghieu/Splendor; contact: your-email@example.com)';
 
-/* Candidate Wikipedia titles per noble, most specific first. The first one
-   that resolves to a page with a lead image wins. */
 const NOBLES = {
   n1: { name: 'Mary Stuart', titles: ['Mary, Queen of Scots'] },
   n2: { name: 'Charles V', titles: ['Charles V, Holy Roman Emperor'] },
@@ -50,8 +27,6 @@ const NOBLES = {
   n10: { name: 'Henry VIII', titles: ['Henry VIII'] }
 };
 
-/* Commons searches for each gem. Refined to cut stones rather than jewellery,
-   which photographs badly at token size. */
 const GEM_QUERIES = {
   white: 'diamond cut gemstone loose stone',
   blue: 'sapphire cut gemstone loose stone',
@@ -63,9 +38,8 @@ const GEM_QUERIES = {
 
 /* ------------------------------------------------------------- helpers */
 
-/* Commons reports licences as short names: "Public domain", "CC BY-SA 4.0",
-   "CC0", "GFDL", "Fair use". Accept only what may be redistributed, and
-   refuse the non-commercial and no-derivatives variants too. */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 function isFreeLicense(shortName) {
   if (!shortName) return false;
   const s = String(shortName).toLowerCase();
@@ -143,20 +117,35 @@ public domain or under a free licence that permits redistribution.
 
 /* --------------------------------------------------------------- network */
 
-async function api(base, params) {
+async function api(base, params, retries = 3) {
   const url = new URL(base);
   Object.keys(params).forEach((key) => url.searchParams.set(key, params[key]));
   url.searchParams.set('format', 'json');
   url.searchParams.set('formatversion', '2');
-  const res = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' } });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url.pathname}`);
-  return res.json();
+
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, { headers: { 'User-Agent': UA, 'Accept': 'application/json' } });
+
+    if (res.status === 429 || res.status === 503) {
+      if (attempt < retries) {
+        const retryAfter = res.headers.get('retry-after');
+        const delay = retryAfter ? parseInt(retryAfter, 10) * 1000 : (attempt + 1) * 2000;
+        await sleep(delay);
+        continue;
+      }
+    }
+
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText} for ${url.pathname}`);
+    
+    // Khoảng cách an toàn giữa các lượt gọi
+    await sleep(350);
+    return res.json();
+  }
 }
 
 const WIKIPEDIA = 'https://en.wikipedia.org/w/api.php';
 const COMMONS = 'https://commons.wikimedia.org/w/api.php';
 
-/* The lead image of a Wikipedia article, at a usable width. */
 async function leadImage(title, width) {
   const data = await api(WIKIPEDIA, {
     action: 'query',
@@ -175,7 +164,6 @@ async function leadImage(title, width) {
   };
 }
 
-/* Licence and authorship for a Commons file, straight from the API. */
 async function fileCredit(fileTitle) {
   if (!fileTitle) return null;
   const data = await api(COMMONS, {
@@ -196,7 +184,6 @@ async function fileCredit(fileTitle) {
   };
 }
 
-/* Free-licensed Commons files matching a search, widest thumbnail first. */
 async function searchFiles(query, width, limit) {
   const data = await api(COMMONS, {
     action: 'query',
@@ -224,13 +211,20 @@ async function searchFiles(query, width, limit) {
   }).filter((f) => f.url && !/svg/i.test(f.mime));
 }
 
-async function download(url, destination) {
-  const res = await fetch(url, { headers: { 'User-Agent': UA } });
-  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
-  const buffer = Buffer.from(await res.arrayBuffer());
-  fs.mkdirSync(path.dirname(destination), { recursive: true });
-  fs.writeFileSync(destination, buffer);
-  return buffer.length;
+async function download(url, destination, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, { headers: { 'User-Agent': UA } });
+    if (res.status === 429 && attempt < retries) {
+      await sleep(2000 * (attempt + 1));
+      continue;
+    }
+    if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+    const buffer = Buffer.from(await res.arrayBuffer());
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, buffer);
+    await sleep(250);
+    return buffer.length;
+  }
 }
 
 /* ------------------------------------------------------------------ main */
@@ -255,11 +249,6 @@ const HELP = `Splendor art fetcher
   --gems      photographs of cut stones for the six gem tokens
   --dry-run   report what would be downloaded, write nothing
   --help      this text
-
-Only public-domain and free-licence (CC0/CC BY/CC BY-SA/GFDL) files are
-accepted; anything else is skipped and reported. Credits land in
-ATTRIBUTION.md, and assets/img/manifest.js is rewritten so the game uses the
-images. Set SPLENDOR_UA to override the User-Agent sent to Wikimedia.
 `;
 
 async function main() {
@@ -360,17 +349,15 @@ async function main() {
   fs.writeFileSync(path.join(IMG_DIR, 'manifest.js'), renderManifest(images));
   fs.writeFileSync(path.join(ROOT, 'ATTRIBUTION.md'), renderAttribution(credits));
   console.log(`\nInstalled ${installed} image(s).`);
-  console.log('  assets/img/manifest.js   rewritten');
-  console.log('  ATTRIBUTION.md           rewritten');
+  console.log('  assets/img/manifest.js    rewritten');
+  console.log('  ATTRIBUTION.md            rewritten');
   if (failures) console.log(`  ${failures} item(s) could not be resolved — the drawing is used for those.`);
-  console.log('\nReload the game; gem tokens, card faces and noble tiles now use the images.');
   return 0;
 }
 
 if (require.main === module) {
   main().then((code) => process.exit(code)).catch((err) => {
     console.error('\nfetch-art failed:', err.message);
-    console.error('If this is a network restriction, run the script somewhere with outbound HTTPS.');
     process.exit(1);
   });
 }
