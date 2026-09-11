@@ -10,7 +10,8 @@ window.SplendorImages = {
     blue: 'assets/img/gems/blue.jpg',
     green: 'assets/img/gems/green.jpg',
     red: 'assets/img/gems/red.jpg',
-    black: 'assets/img/gems/black.jpg'
+    black: 'assets/img/gems/black.jpg',
+    gold: 'assets/img/gems/gold.jpg'
   },
   cards: {},
   nobles: {
@@ -19,6 +20,8 @@ window.SplendorImages = {
     n3: 'assets/img/nobles/n3.jpg',
     n4: 'assets/img/nobles/n4.jpg',
     n5: 'assets/img/nobles/n5.jpg',
+    n6: 'assets/img/nobles/n6.jpg',
+    n7: 'assets/img/nobles/n7.jpg',
     n8: 'assets/img/nobles/n8.jpg',
     n9: 'assets/img/nobles/n9.jpg',
     n10: 'assets/img/nobles/n10.jpg'
