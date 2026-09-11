@@ -80,8 +80,13 @@
 
     <div class="menu-extra">
       <button type="button" class="btn btn-gold" id="resume-btn" hidden data-i18n="menu.resume"></button>
+      <button type="button" class="btn btn-learn" id="tutorial-btn">
+        <span aria-hidden="true">🎓</span>
+        <span data-i18n="tut.title"></span>
+      </button>
       <button type="button" class="btn btn-ghost" id="rules-btn" data-i18n="menu.rules"></button>
     </div>
+    <p class="learn-hint" id="learn-hint" hidden data-i18n="tut.subtitle"></p>
     <p class="credit">Fan-made, open-source implementation of the board game Splendor. Không liên kết với nhà phát hành.</p>
   </div>
 </section>
@@ -128,6 +133,7 @@
 </section>
 
 <!-- overlays -->
+<div id="coach-root" class="coach-root" hidden></div>
 <div id="modal-root" class="modal-root" hidden></div>
 <div id="toast-root" class="toast-root" aria-live="polite" aria-atomic="false"></div>
 
@@ -136,6 +142,7 @@
 <script src="assets/js/engine.js"></script>
 <script src="assets/js/ai.js"></script>
 <script src="assets/js/ui.js"></script>
+<script src="assets/js/tutorial.js"></script>
 <script src="assets/js/app.js"></script>
 </body>
 </html>

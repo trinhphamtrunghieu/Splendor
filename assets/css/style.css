@@ -721,6 +721,72 @@ h1, h2, h3, p { margin: 0; }
   .nobles-panel { display: none; }        /* tiny screens: nobles live in the log */
 }
 
+/* ───────────────────────── tutorial coach marks ───────────────────────── */
+
+/* The dim panels sit around the highlight rather than over it, and nothing
+   here takes pointer events — the player keeps using the real board. */
+.coach-root { position: fixed; inset: 0; z-index: 80; pointer-events: none; }
+.coach-dim { position: fixed; background: rgba(8, 6, 14, .66); }
+.coach-ring {
+  position: fixed;
+  border-radius: 12px;
+  box-shadow: 0 0 0 2px var(--gold), 0 0 18px rgba(232, 182, 76, .45);
+  animation: coach-pulse 1.9s ease-in-out infinite;
+}
+@keyframes coach-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--gold), 0 0 16px rgba(232, 182, 76, .35); }
+  50%      { box-shadow: 0 0 0 3px var(--gold), 0 0 26px rgba(232, 182, 76, .65); }
+}
+
+.coach-bubble {
+  position: fixed;
+  pointer-events: auto;                  /* only the bubble is clickable */
+  width: min(410px, calc(100vw - 24px));
+  background: linear-gradient(170deg, #241d38 0%, #191327 100%);
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  padding: 13px 14px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .6);
+  animation: rise .18s ease;
+}
+.coach-head { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; }
+.coach-count {
+  font-size: .66rem; font-weight: 800; letter-spacing: .1em;
+  color: var(--gold); background: rgba(232, 182, 76, .12);
+  border: 1px solid var(--gold-dim); border-radius: 999px; padding: 3px 9px;
+}
+.coach-skip {
+  margin-left: auto;
+  border: 0; background: none; color: var(--muted-2);
+  font-size: .74rem; text-decoration: underline; cursor: pointer; padding: 4px;
+}
+.coach-skip:hover { color: var(--text); }
+.coach-title { font-size: 1rem; font-weight: 800; margin-bottom: 5px; }
+.coach-body {
+  color: #cfc7e0; font-size: .86rem; line-height: 1.55;
+  max-height: 42vh; overflow-y: auto;   /* long text can never push the buttons off-screen */
+}
+@media (max-width: 430px) { .coach-body { font-size: .82rem; } .coach-title { font-size: .95rem; } }
+.coach-actions { display: flex; align-items: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.coach-actions .btn { min-height: 38px; }
+.coach-wait {
+  flex: 1 1 auto;
+  font-size: .76rem; color: var(--gold);
+  animation: coach-blink 1.6s ease-in-out infinite;
+}
+@keyframes coach-blink { 0%, 100% { opacity: 1 } 50% { opacity: .45 } }
+
+/* A tutorial turn is never someone else's turn, so hide the handover chrome. */
+body.is-coaching .final-chip { display: none; }
+
+.btn-learn {
+  display: inline-flex; align-items: center; gap: 8px;
+  border-color: var(--accent);
+  background: linear-gradient(140deg, rgba(124, 92, 255, .26), rgba(124, 92, 255, .08));
+}
+.btn-learn.is-suggested { animation: coach-pulse 2.4s ease-in-out infinite; }
+.learn-hint { text-align: center; color: var(--muted-2); font-size: .78rem; margin-top: -8px; }
+
 /* privacy screen: blur the board while the device changes hands */
 body.is-curtained .table,
 body.is-curtained .tray,

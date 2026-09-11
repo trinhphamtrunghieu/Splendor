@@ -7,6 +7,7 @@
   var E = global.SplendorEngine;
   var AI = global.SplendorAI;
   var UI = global.SplendorUI;
+  var Tutorial = global.SplendorTutorial;
   var I18n = global.SplendorI18n;
   var t = I18n.t;
 
@@ -27,6 +28,7 @@
       privacy: true,
       count: { single: 2, multi: 2 },
       difficulty: 'normal',
+      tutorialDone: false,
       names: { single: [], multi: [] }
     }
   };
@@ -48,6 +50,7 @@
 
   function saveGame() {
     if (!App.state) return;
+    if (App.mode === 'tutorial') return;      // keep the player's real save intact
     if (App.state.phase === 'gameover') { drop(SAVE_KEY); return; }
     store(SAVE_KEY, { mode: App.mode, state: App.state });
   }
@@ -147,11 +150,18 @@
 
   function showMenu() {
     clearTimeout(App.aiTimer);
+    Tutorial.stop();
     document.body.classList.remove('is-curtained');
     $('screen-game').classList.remove('is-active');
     $('screen-menu').classList.add('is-active');
     var saved = load(SAVE_KEY);
     $('resume-btn').hidden = !(saved && saved.state && saved.state.phase !== 'gameover');
+
+    // First visit: point newcomers at the walkthrough rather than the board.
+    var suggest = !App.settings.tutorialDone;
+    $('tutorial-btn').classList.toggle('is-suggested', suggest);
+    $('learn-hint').hidden = !suggest;
+
     applyI18n();
     renderSetup();
   }
@@ -175,6 +185,29 @@
     App.discardSel = {};
     App.curtainAck = null;
     enterGame();
+  }
+
+  function startTutorial() {
+    clearTimeout(App.aiTimer);
+    App.mode = 'tutorial';
+    App.state = Tutorial.buildState((App.settings.names.single || [])[0]);
+    App.picked = [];
+    App.discardSel = {};
+    App.curtainAck = null;
+    enterGame();
+    Tutorial.start({
+      state: function () { return App.state; },
+      onTutorialEnd: function (mode) {
+        App.settings.tutorialDone = true;
+        saveSettings();
+        App.state = null;
+        if (mode === 'single' || mode === 'multi') App.mode = mode;
+        showMenu();
+        if (mode === 'single' || mode === 'multi') {
+          $('setup').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+      }
+    });
   }
 
   function enterGame() {
@@ -211,6 +244,10 @@
     });
     UI.renderTray($('tray'), state, App.picked, isHumanTurn);
     $('take-hint').textContent = t('action.takeHint');
+
+    // Card nodes are replaced on every draw, so the coach marks have to be
+    // re-anchored here rather than only when a turn ends.
+    if (Tutorial.isActive()) Tutorial.refresh();
   }
 
   /* ------------------------------------------------------- turn cycle */
@@ -226,6 +263,7 @@
       UI.gameOverModal(state);
       return;
     }
+
 
     var player = E.currentPlayer(state);
 
@@ -257,6 +295,8 @@
       App.aiTimer = setTimeout(aiMove, SPEEDS[App.settings.speed] || SPEEDS.normal);
       return;
     }
+
+    if (Tutorial.isActive()) return;          // solo board, no handover
 
     if (needsCurtain()) {
       document.body.classList.add('is-curtained');
@@ -374,6 +414,8 @@
     });
 
     $('rules-btn').addEventListener('click', function () { UI.rulesModal(); });
+
+    $('tutorial-btn').addEventListener('click', function () { startTutorial(); });
   }
 
   function wireGame() {
@@ -480,6 +522,10 @@
           break;
         case 'rules':
           UI.rulesModal();
+          break;
+        case 'tutorial':
+          UI.closeModal();
+          startTutorial();
           break;
         case 'lang':
           I18n.setLang(I18n.getLang() === 'vi' ? 'en' : 'vi');

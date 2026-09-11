@@ -224,6 +224,16 @@
 
   var modalRoot = null;
   var onCloseHandler = null;
+  var modalListeners = [];
+
+  /* Lets the tutorial coach marks step aside while a dialog owns the screen. */
+  function onModalChange(fn) {
+    modalListeners.push(fn);
+  }
+
+  function notifyModalChange() {
+    modalListeners.forEach(function (fn) { fn(); });
+  }
 
   function modal(html, options) {
     options = options || {};
@@ -234,6 +244,7 @@
     modalRoot.dataset.dismissable = options.dismissable === false ? 'no' : 'yes';
     var focusable = modalRoot.querySelector('button, input, [tabindex]');
     if (focusable && options.autofocus !== false) focusable.focus();
+    notifyModalChange();
     return modalRoot.firstChild;
   }
 
@@ -243,6 +254,7 @@
     modalRoot.innerHTML = '';
     var handler = onCloseHandler;
     onCloseHandler = null;
+    notifyModalChange();
     if (handler) handler();
   }
 
@@ -427,6 +439,7 @@
       '<div class="modal-actions" style="flex-direction:column">' +
         '<button type="button" class="btn btn-primary btn-block" data-close="1">' + t('game.resumeGame') + '</button>' +
         '<button type="button" class="btn btn-block" data-do="rules">' + t('game.rules') + '</button>' +
+        '<button type="button" class="btn btn-block" data-do="tutorial">' + t('tut.title') + '</button>' +
         '<button type="button" class="btn btn-block" data-do="lang">' +
           (global.SplendorI18n.getLang() === 'vi' ? 'English' : 'Tiếng Việt') + '</button>' +
         '<button type="button" class="btn btn-danger btn-block" data-do="quit">' + t('game.backToMenu') + '</button>' +
@@ -480,6 +493,7 @@
     modal: modal,
     closeModal: closeModal,
     isModalOpen: isModalOpen,
+    onModalChange: onModalChange,
     toast: toast
   };
 })(typeof window !== 'undefined' ? window : globalThis);

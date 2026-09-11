@@ -6,10 +6,12 @@ global.window = global;
 require('../assets/js/data.js');
 require('../assets/js/engine.js');
 require('../assets/js/ai.js');
+require('../assets/js/tutorial.js');
 
 var D = window.SplendorData;
 var E = window.SplendorEngine;
 var AI = window.SplendorAI;
+var Tut = window.SplendorTutorial;
 
 var passed = 0;
 var failed = 0;
@@ -389,6 +391,83 @@ check('legalActions never offers an unaffordable purchase', function () {
   E.legalActions(state).forEach(function (action) {
     if (action.type === 'buy') assert(E.canAfford(state.players[0], action.card), 'offered ' + action.cardId);
   });
+});
+
+console.log('\ntutorial walkthrough');
+
+/* The tutorial tells the player exactly which gems to take and which cards to
+   buy and reserve. If the card data ever shifts, these assertions fail instead
+   of the instructions quietly becoming wrong. */
+
+check('the scripted board puts the named cards where the coach marks point', function () {
+  var state = Tut.buildState('Learner');
+  eq(state.players.length, 1, 'the tutorial is solo, so nothing moves unprompted');
+  eq(state.board[1][0].id, Tut.PLAN.buyCardId, 'buy target on the tier 1 slot');
+  eq(state.board[3][0].id, Tut.PLAN.reserveCardId, 'reserve target on the tier 3 slot');
+});
+
+check('placing a card keeps every tier at full size with no duplicates', function () {
+  var state = Tut.buildState('Learner');
+  var seen = {};
+  [1, 2, 3].forEach(function (tier) {
+    eq(state.board[tier].length, 4, 'tier ' + tier + ' board');
+    state.board[tier].concat(state.decks[tier]).forEach(function (card) {
+      assert(card, 'tier ' + tier + ' has a hole');
+      assert(!seen[card.id], 'duplicate card ' + card.id);
+      seen[card.id] = true;
+      eq(card.tier, tier, 'card ' + card.id + ' in the wrong tier');
+    });
+  });
+  eq(Object.keys(seen).length, 90, 'all 90 development cards still present');
+});
+
+check('the prescribed sequence of moves is legal, in order', function () {
+  var state = Tut.buildState('Learner');
+
+  var first = E.takeTokens(state, Tut.PLAN.firstTake);
+  assert(first.ok, 'step "take 3 different": ' + first.error);
+
+  var second = E.takeTokens(state, Tut.PLAN.secondTake);
+  assert(second.ok, 'step "take 2 of one colour": ' + second.error);
+
+  var target = state.board[1][0];
+  assert(E.canAfford(state.players[0], target),
+    'the buy step must be affordable after the two prescribed takes');
+  var bought = E.buyCard(state, Tut.PLAN.buyCardId);
+  assert(bought.ok, 'step "buy": ' + bought.error);
+
+  var reserved = E.reserveCard(state, Tut.PLAN.reserveCardId);
+  assert(reserved.ok, 'step "reserve": ' + reserved.error);
+  eq(state.players[0].tokens.gold, 1, 'reserving teaches the gold reward');
+  assert(!E.canAfford(state.players[0], state.players[0].reserved[0]),
+    'the reserve target should be out of reach, which is the point of the step');
+});
+
+check('the pair the tutorial asks for is legal in a solo bank', function () {
+  var state = Tut.buildState('Learner');
+  var color = Tut.PLAN.secondTake[0];
+  assert(state.tokens[color] >= 4, 'two of a colour needs 4 in the pile, has ' + state.tokens[color]);
+  eq(Tut.PLAN.secondTake.length, 2);
+  eq(Tut.PLAN.secondTake[0], Tut.PLAN.secondTake[1], 'the pair must be one colour');
+  eq(Tut.PLAN.firstTake.length, 3);
+  eq(new Set(Tut.PLAN.firstTake).size, 3, 'the first take must be three distinct colours');
+});
+
+check('every step either waits for a move or advances on a button', function () {
+  var interactive = 0;
+  Tut.STEPS.forEach(function (step, i) {
+    assert(step.key, 'step ' + i + ' has no key');
+    if (step.check) {
+      interactive++;
+      assert(typeof step.check === 'function', 'step ' + step.key + ' check');
+    }
+    if (step.target) {
+      var kind = typeof step.target;
+      assert(kind === 'string' || kind === 'function', 'step ' + step.key + ' target');
+    }
+  });
+  assert(interactive >= 4, 'a walkthrough that never asks the player to act is just text');
+  assert(Tut.STEPS[Tut.STEPS.length - 1].final, 'the last step should offer a real game');
 });
 
 console.log('\nself-play (engine + AI invariants)');

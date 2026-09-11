@@ -94,6 +94,51 @@
       'modal.confirmNew.title': 'Bắt đầu ván mới?',
       'modal.confirmNew.body': 'Ván đang chơi sẽ bị xoá.',
 
+      'tut.title': 'Hướng dẫn cho người mới',
+      'tut.subtitle': 'Chơi thử từng bước — mình chỉ chỗ, bạn tự bấm.',
+      'tut.player': 'Người mới',
+      'tut.next': 'Tiếp',
+      'tut.back': 'Lùi lại',
+      'tut.skip': 'Bỏ qua hướng dẫn',
+      'tut.skipStep': 'Bỏ qua bước này',
+      'tut.waiting': 'Đang chờ bạn thực hiện…',
+
+      'tut.welcome.title': 'Chào mừng tới Splendor!',
+      'tut.welcome.body': 'Bạn là thương nhân đá quý: gom đá để mua mỏ, mỏ cho bạn chiết khấu và điểm uy tín. Ai đạt 15 điểm trước sẽ kích hoạt vòng cuối. Mỗi lượt bạn chỉ được làm đúng MỘT việc — hướng dẫn này đi qua từng việc một, trên bàn chơi thật.',
+
+      'tut.board.title': 'Đọc một thẻ phát triển',
+      'tut.board.body': 'Ba hàng là ba cấp thẻ: hàng dưới rẻ nhất, hàng trên đắt và nhiều điểm nhất. Trên mỗi thẻ: số lớn góc trên trái là điểm uy tín, viên đá góc trên phải là màu đá thẻ cho bạn, còn dãy số tròn phía dưới là giá. Viền xanh nghĩa là bạn mua được ngay.',
+
+      'tut.take3.title': 'Việc 1 — lấy 3 viên khác màu',
+      'tut.take3.body': 'Bấm vào {gems} ở ngân hàng, rồi bấm nút xanh ở khay dưới để xác nhận. Bấm lại một viên đã chọn để bỏ chọn.',
+
+      'tut.take2.title': 'Việc 2 — hoặc 2 viên cùng màu',
+      'tut.take2.body': 'Thay vì 3 viên khác màu, bạn có thể lấy 2 viên cùng màu — nhưng chỉ khi chồng đó còn ít nhất 4 viên. Bấm {gem} hai lần rồi xác nhận.',
+
+      'tut.buy.title': 'Việc 3 — mua thẻ',
+      'tut.buy.body': 'Thẻ được khoanh sáng có giá đúng bằng số đá bạn vừa gom. Bấm vào thẻ để xem bảng giá, rồi bấm “Mua”. Nếu chưa đủ, cứ lấy thêm đá vài lượt rồi quay lại mua.',
+
+      'tut.discount.title': 'Vì sao thẻ 0 điểm vẫn quý',
+      'tut.discount.body': 'Thẻ đã mua nằm lại với bạn mãi mãi, ở ô “Chiết khấu” này. Mỗi viên chiết khấu trả thay bạn một viên đá cùng màu trong MỌI lần mua sau — và không bao giờ mất đi. Vì thế thẻ rẻ, 0 điểm vẫn rất đáng mua sớm: chúng làm cả ván sau này rẻ đi.',
+
+      'tut.reserve.title': 'Việc 4 — giữ thẻ để dành',
+      'tut.reserve.body': 'Thẻ được khoanh sáng đáng 5 điểm nhưng quá đắt lúc này. Bấm vào nó rồi bấm “Giữ thẻ”: thẻ về tay bạn, không ai mua được nữa, và bạn nhận 1 vàng. Giữ tối đa 3 thẻ.',
+
+      'tut.gold.title': 'Vàng thay được mọi màu',
+      'tut.gold.body': 'Vàng là viên duy nhất không lấy trực tiếp từ ngân hàng được — chỉ nhận khi giữ thẻ. Bù lại, khi mua thẻ, mỗi viên vàng thay cho một viên đá bất kỳ màu nào bạn còn thiếu.',
+
+      'tut.nobles.title': 'Quý tộc — 3 điểm miễn phí',
+      'tut.nobles.body': 'Quý tộc không mua được. Cuối mỗi lượt, nếu số thẻ chiết khấu của bạn đạt yêu cầu ghi trên một quý tộc, người đó tự đến thăm và tặng 3 điểm mà bạn không mất gì. Hãy ngắm trước xem mình sẽ đi theo quý tộc nào.',
+
+      'tut.limit.title': 'Giới hạn 10 viên',
+      'tut.limit.body': 'Ô này đếm số đá bạn đang giữ. Cuối lượt không được giữ quá 10 viên (tính cả vàng) — quá thì game sẽ bắt bạn trả lại cho đủ 10. Đừng gom quá nhiều mà không mua gì.',
+
+      'tut.goal.title': 'Thắng thế nào',
+      'tut.goal.body': 'Bảng này theo dõi điểm — ở ván hướng dẫn chỉ có bạn, còn ván thật sẽ có đủ đối thủ ở đây, kèm số thẻ và số đá họ đang giữ. Ai đạt 15 điểm trước sẽ kích hoạt vòng cuối — cả bàn được chơi hết vòng đó cho công bằng. Hết vòng, ai nhiều điểm nhất thắng; bằng điểm thì ai mua ít thẻ hơn thắng.',
+
+      'tut.done.title': 'Vậy là xong!',
+      'tut.done.body': 'Bạn đã biết cả 4 việc, chiết khấu, vàng và quý tộc — đủ để chơi thật. Trong ván thật còn có đối thủ: họ cũng nhắm thẻ bạn muốn, nên “giữ thẻ” là nước đi rất mạnh. Nút “Luật” trong menu luôn có bản luật đầy đủ.',
+
       'rules.title': 'Luật Splendor',
       'rules.goal.h': 'Mục tiêu',
       'rules.goal.p': 'Người đầu tiên đạt 15 điểm uy tín sẽ kích hoạt vòng cuối. Hết vòng đó, ai nhiều điểm nhất thì thắng; nếu bằng điểm, người mua ít thẻ hơn thắng.',
@@ -244,6 +289,51 @@
       'modal.curtain.ready': "I'm ready",
       'modal.confirmNew.title': 'Start a new game?',
       'modal.confirmNew.body': 'The game in progress will be discarded.',
+
+      'tut.title': 'Tutorial for new players',
+      'tut.subtitle': 'A guided first game — it points, you tap.',
+      'tut.player': 'Newcomer',
+      'tut.next': 'Next',
+      'tut.back': 'Back',
+      'tut.skip': 'Skip tutorial',
+      'tut.skipStep': 'Skip this step',
+      'tut.waiting': 'Waiting for your move…',
+
+      'tut.welcome.title': 'Welcome to Splendor!',
+      'tut.welcome.body': 'You are a gem merchant: collect gems to buy mines, and mines give you discounts and prestige points. The first player to 15 points triggers the final round. Each turn you do exactly ONE thing — this walkthrough covers them one at a time, on a real board.',
+
+      'tut.board.title': 'Reading a development card',
+      'tut.board.body': 'The three rows are the three tiers: the bottom row is cheapest, the top row costs most and scores most. On each card: the big number top-left is prestige points, the gem top-right is the gem that card gives you, and the circles along the bottom are its price. A green outline means you can afford it right now.',
+
+      'tut.take3.title': 'Option 1 — take 3 different gems',
+      'tut.take3.body': 'Tap {gems} in the bank, then press the green button in the tray below to confirm. Tap a selected gem again to unselect it.',
+
+      'tut.take2.title': 'Option 2 — or 2 of one colour',
+      'tut.take2.body': 'Instead of three different gems you may take two of one colour — but only while that pile still has 4 or more. Tap {gem} twice, then confirm.',
+
+      'tut.buy.title': 'Option 3 — buy a card',
+      'tut.buy.body': 'The highlighted card costs exactly the gems you just collected. Tap it to see the price breakdown, then press “Buy”. If you are short, spend a few more turns collecting and come back to it.',
+
+      'tut.discount.title': 'Why a 0-point card is still good',
+      'tut.discount.body': 'A card you buy stays with you forever, here under “Discounts”. Each discount pays for one gem of its colour on EVERY later purchase, and it is never spent. That is why cheap 0-point cards are worth buying early: they make the rest of the game cheaper.',
+
+      'tut.reserve.title': 'Option 4 — reserve a card',
+      'tut.reserve.body': 'The highlighted card is worth 5 points but is far too expensive right now. Tap it and press “Reserve”: it goes into your hand where nobody else can buy it, and you take a gold. Three reserved cards maximum.',
+
+      'tut.gold.title': 'Gold is a wildcard',
+      'tut.gold.body': 'Gold is the one token you can never take straight from the bank — you only get it by reserving a card. In exchange, when buying, each gold stands in for one gem of any colour you are missing.',
+
+      'tut.nobles.title': 'Nobles — 3 free points',
+      'tut.nobles.body': 'Nobles cannot be bought. At the end of any turn, if your card discounts meet the requirement printed on a noble, that noble visits you for 3 points and costs you nothing. Decide early which noble you are building towards.',
+
+      'tut.limit.title': 'The 10-token limit',
+      'tut.limit.body': 'This counter shows the gems you are holding. You may not end a turn with more than 10 tokens, gold included — the game will make you return the excess. Do not hoard without buying.',
+
+      'tut.goal.title': 'How you win',
+      'tut.goal.body': 'This panel tracks the score — in this walkthrough it is only you, but a real game lists every opponent here with the cards and gems they hold. The first to 15 points triggers the final round, which everyone plays out so all players get the same number of turns. Then the highest score wins, and a tie goes to whoever bought fewer cards.',
+
+      'tut.done.title': 'That is all of it!',
+      'tut.done.body': 'You now know the four actions, discounts, gold and nobles — enough to play for real. A real game adds opponents who want the same cards, which is what makes reserving so strong. The “Rules” button in the menu always has the full text.',
 
       'rules.title': 'How to play Splendor',
       'rules.goal.h': 'Goal',

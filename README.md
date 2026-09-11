@@ -19,6 +19,11 @@ the physical game is played.
 
 ## Features
 
+- **Interactive tutorial for new players.** A 12-step guided first game on a scripted solo
+  board: it spotlights the real bank, cards and tray, and the steps that teach an action
+  (take 3 gems, take a pair, buy, reserve) wait until you have actually made the move with
+  the same buttons a normal game uses. Skippable at any point, and it never touches your
+  saved game.
 - Complete Splendor ruleset: 90 development cards, 10 noble tiles, gold wildcards, the
   10-token limit, reserving from the deck, the final round after 15 points and the
   fewest-cards tiebreak.
@@ -69,6 +74,13 @@ default branch, either merge this branch into the default branch or add the bran
 
 A `.nojekyll` file keeps GitHub from running Jekyll over the assets.
 
+## Learning the game
+
+New to Splendor? Press **Tutorial for new players** on the main menu (also in the in-game
+menu). It plays a real game, on a board arranged so that every instruction is exact, and
+teaches the four turn actions plus discounts, gold and nobles in about two minutes. The
+**Rules** dialog is the full reference text in both languages.
+
 ## How to play (short version)
 
 Each turn, do **exactly one** of:
@@ -95,6 +107,7 @@ assets/js/data.js          the 90 cards and 10 nobles, generated from cost patte
 assets/js/engine.js        rules engine — pure state machine, no DOM
 assets/js/ai.js            computer opponents (one-ply search + evaluation)
 assets/js/i18n.js          Vietnamese and English strings
+assets/js/tutorial.js      the guided walkthrough (scripted board + coach marks)
 assets/js/ui.js            rendering and dialogs
 assets/js/app.js           controller — menus, turn loop, persistence
 tests/engine.test.js       rules tests + 200-game self-play invariant check
@@ -113,7 +126,9 @@ node tests/engine.test.js
 
 They cover deck composition, each turn action and its rejections, the token limit, noble
 visits and choices, the final round, tiebreaks, and 60 bot-vs-bot games checking that tokens
-and prestige points are conserved and that every game terminates. For a deeper soak, raise
+and prestige points are conserved and that every game terminates. They also replay the
+tutorial's scripted moves through the engine, so the walkthrough cannot quietly start giving
+instructions that no longer work. For a deeper soak, raise
 the game count:
 
 ```bash
@@ -145,6 +160,10 @@ cùng chơi trên một máy — đúng như khi chơi bàn thật.
 
 ## Điểm nổi bật
 
+- **Hướng dẫn tương tác cho người mới.** 12 bước chơi thử trên một bàn được dàn sẵn: hướng dẫn
+  khoanh sáng đúng chỗ cần bấm (ngân hàng, thẻ, khay của bạn), và ở những bước dạy một nước đi
+  (lấy 3 viên, lấy 2 viên cùng màu, mua thẻ, giữ thẻ) nó chờ tới khi bạn thật sự bấm xong mới
+  đi tiếp. Bỏ qua lúc nào cũng được, và không ảnh hưởng ván đang lưu.
 - Đầy đủ luật Splendor: 90 thẻ phát triển, 10 thẻ quý tộc, vàng thay mọi màu, giới hạn 10
   token, giữ thẻ úp từ chồng, vòng cuối sau khi có người đạt 15 điểm, và luật hoà (ai mua ít
   thẻ hơn thì thắng).
@@ -155,6 +174,12 @@ cùng chơi trên một máy — đúng như khi chơi bàn thật.
 - Giao diện **Tiếng Việt và English**, đổi lúc nào cũng được.
 - Tự lưu ván đang chơi, mở lại trình duyệt vẫn tiếp tục được.
 - Thêm được vào màn hình chính như một ứng dụng, chơi offline sau lần tải đầu.
+
+## Mới chơi lần đầu?
+
+Bấm **Hướng dẫn cho người mới** ở menu chính (hoặc trong menu khi đang chơi). Hướng dẫn cho
+bạn chơi thật một ván nhỏ, dạy đủ 4 việc trong một lượt cùng với chiết khấu, vàng và quý tộc
+trong khoảng hai phút. Nút **Luật** luôn có bản luật đầy đủ để tra lại.
 
 ## Cách chơi nhanh
 
