@@ -48,22 +48,24 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 ## Deploying to GitHub Pages
 
-The site is plain static files at the repository root, so either Pages source works.
+The site is plain static files at the repository root, so there is nothing to build. Pages
+has to be switched on once by hand — that is the only manual step, and only a repository
+admin can do it:
 
-**Option A — GitHub Actions (runs the tests first).** The workflow in
-`.github/workflows/pages.yml` runs `tests/engine.test.js` on every push and publishes the
-repository root when the push is to the default branch (whatever it is named) or when you run
-the workflow by hand from the Actions tab. It passes `enablement: true` to
-`actions/configure-pages`, so the first successful run switches Pages on by itself with
-GitHub Actions as the source — no repository setting to change. If the deploy step is rejected
-because the
-`github-pages` environment only allows the default branch, either merge this branch into the
-default branch or add the branch under **Settings → Environments → github-pages → Deployment
-branches**.
+**Settings → Pages → Build and deployment → Source**, then either:
 
-**Option B — deploy from a branch (no Actions).** In **Settings → Pages**, set
-**Source: Deploy from a branch**, pick the branch and the `/ (root)` folder. Nothing needs to
-be built.
+- **GitHub Actions** — the workflow in `.github/workflows/pages.yml` runs
+  `tests/engine.test.js` on every push and publishes the repository root when the push is to
+  the default branch (whatever it is named) or when you run the workflow by hand from the
+  Actions tab. Until Pages is switched on, the `deploy` job fails at `configure-pages` with
+  *"Create Pages site failed … Resource not accessible by integration"* — the workflow asks
+  for it with `enablement: true`, but the Actions token is not allowed to create the site on
+  its own. The `test` job runs and passes regardless.
+- **Deploy from a branch** — pick the branch and the `/ (root)` folder. No Actions involved.
+
+If the deploy step is instead rejected because the `github-pages` environment only allows the
+default branch, either merge this branch into the default branch or add the branch under
+**Settings → Environments → github-pages → Deployment branches**.
 
 A `.nojekyll` file keeps GitHub from running Jekyll over the assets.
 
