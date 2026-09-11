@@ -89,8 +89,8 @@
       '<span class="noble-name">' + escapeHtml(name) + '</span></div>';
   }
 
-  function renderNobles(root, state) {
-    var player = E.currentPlayer(state);
+  function renderNobles(root, state, viewer) {
+    var player = state.players[viewer == null ? state.current : viewer];
     root.innerHTML = state.nobles.map(function (noble) {
       var ready = Object.keys(noble.req).every(function (c) { return (player.bonuses[c] || 0) >= noble.req[c]; });
       var reqs = Object.keys(noble.req).map(function (c) {
@@ -102,8 +102,8 @@
     }).join('') || '<p class="empty-note">—</p>';
   }
 
-  function renderTiers(root, state, selectedCardId) {
-    var player = E.currentPlayer(state);
+  function renderTiers(root, state, selectedCardId, viewer) {
+    var player = state.players[viewer == null ? state.current : viewer];
     root.innerHTML = [3, 2, 1].map(function (tier) {
       var left = state.decks[tier].length;
       var deck = '<button type="button" class="deck" data-deck="' + tier + '"' + (left ? '' : ' disabled') + ' ' +
@@ -183,11 +183,14 @@
     }).join('');
   }
 
-  function renderTray(root, state, picked, interactive) {
-    var player = E.currentPlayer(state);
+  /* `viewer` is whose tray this is — the local player online, the player at the
+     device otherwise. It is not always the player whose turn it is. */
+  function renderTray(root, state, picked, interactive, viewer) {
+    var seat = viewer == null ? state.current : viewer;
+    var player = state.players[seat];
     var pickCount = picked.length;
     var tokenError = pickCount ? E.validateTokenPick(state, picked) : 'empty';
-    var stuck = interactive && state.phase === 'play' && !E.hasRealAction(state);
+    var stuck = interactive && state.phase === 'play' && seat === state.current && !E.hasRealAction(state);
 
     var reserved = player.reserved.length
       ? player.reserved.map(function (card) {
@@ -197,7 +200,7 @@
 
     root.innerHTML =
       '<div class="tray-head">' +
-        '<span class="player-dot" style="background:' + PLAYER_COLORS[state.current % 4] + '"></span>' +
+        '<span class="player-dot" style="background:' + PLAYER_COLORS[seat % 4] + '"></span>' +
         '<span class="tray-title">' + escapeHtml(player.name) + '</span>' +
         (player.type === 'ai' ? '<span class="player-tag">' + t('game.ai') + '</span>' : '') +
         '<span class="tray-pts">' + player.points + ' ' + t('game.points') + '</span>' +

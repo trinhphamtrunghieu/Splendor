@@ -239,6 +239,72 @@ h1, h2, h3, p { margin: 0; }
 .menu-extra { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .credit { text-align: center; color: var(--muted-2); font-size: .74rem; line-height: 1.6; }
 
+/* ───────────────────────────── online lobby ───────────────────────────── */
+
+.mode-card--wide { grid-column: 1 / -1; }
+.mode-card--wide .mode-icon svg { color: var(--accent-2); fill: none; }
+
+.online-actions { display: flex; flex-direction: column; gap: 12px; }
+.join-row { display: flex; gap: 9px; }
+.join-row .btn { flex: 0 0 auto; }
+.code-input {
+  flex: 1 1 auto; min-width: 0;
+  background: var(--bg); border: 1px solid var(--line); color: var(--text);
+  border-radius: 10px; padding: 11px 12px; min-height: var(--tap);
+  font-size: 1.15rem; font-weight: 800; letter-spacing: .28em;
+  text-transform: uppercase; text-align: center;
+}
+.broker-url {
+  width: 100%;
+  background: var(--bg); border: 1px solid var(--line); color: var(--muted);
+  border-radius: 10px; padding: 9px 11px; font-size: .78rem;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.lobby-wrap { gap: 18px; }
+.lobby-title { font-size: clamp(1.5rem, 6vw, 2rem); font-weight: 800; letter-spacing: .04em; }
+.room-code {
+  display: inline-flex; align-items: center; gap: 12px;
+  margin-top: 14px; padding: 10px 10px 10px 18px;
+  background: var(--surface); border: 1px solid var(--gold-dim); border-radius: 14px;
+}
+.room-code-value {
+  font-size: clamp(1.6rem, 9vw, 2.4rem); font-weight: 850;
+  letter-spacing: .22em; color: var(--gold);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.lobby-status { margin-top: 12px; color: var(--muted); font-size: .86rem; line-height: 1.5; }
+.lobby-status.is-ok { color: var(--ok); }
+.lobby-status.is-error { color: var(--danger); }
+
+.seat-list { display: flex; flex-direction: column; gap: 7px; }
+.seat {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 11px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.seat.is-off { opacity: .5; }
+.seat-name { font-weight: 700; flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.seat-state { color: var(--ok); font-size: .7rem; }
+.seat.is-off .seat-state { color: var(--muted-2); }
+.seat-kick {
+  border: 0; background: transparent; color: var(--muted-2);
+  font-size: 1.2rem; line-height: 1; cursor: pointer; padding: 2px 6px;
+}
+.seat-kick:hover { color: var(--danger); }
+.lobby-actions { display: flex; gap: 9px; flex-wrap: wrap; }
+.lobby-actions .btn { flex: 1 1 auto; }
+
+.net-chip {
+  font-size: .68rem; font-weight: 800; letter-spacing: .1em;
+  border-radius: 999px; padding: 5px 9px;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+.net-chip.is-on { background: rgba(63, 191, 143, .16); color: var(--ok); border: 1px solid rgba(63, 191, 143, .4); }
+.net-chip.is-off { background: rgba(224, 85, 107, .16); color: var(--danger); border: 1px solid rgba(224, 85, 107, .45); }
+
+#screen-lobby.is-active { display: block; }
+
 /* ───────────────────────────── top bar ───────────────────────────── */
 
 /* App shell: the bars stay put and only the table scrolls, so the tray can

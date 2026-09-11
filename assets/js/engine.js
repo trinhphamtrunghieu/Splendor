@@ -485,6 +485,8 @@
       case 'reserve': return reserveCard(state, action.cardId);
       case 'reserveDeck': return reserveFromDeck(state, action.tier);
       case 'pass': return passTurn(state);
+      case 'discard': return discardTokens(state, action.pile);
+      case 'noble': return chooseNoble(state, action.nobleId);
       default: return { ok: false, error: 'err.generic' };
     }
   }

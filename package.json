@@ -1,0 +1,19 @@
+{
+  "name": "splendor-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Splendor board game in the browser — static, no build step",
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/engine.test.js",
+    "test:net": "node tests/net.test.mjs",
+    "test:all": "npm test && npm run test:net"
+  },
+  "devDependencies": {
+    "aedes": "^1.1.2",
+    "ws": "^8.21.3"
+  },
+  "comments": {
+    "why": "The game itself has no dependencies and needs no build: index.html loads plain scripts. These two packages exist only so the online-play tests can run a real MQTT broker in-process."
+  }
+}

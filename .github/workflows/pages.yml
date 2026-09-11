@@ -28,6 +28,14 @@ jobs:
       - name: Run the rules test suite
         run: node tests/engine.test.js
 
+      # Online play is tested against a real MQTT broker started in-process.
+      # These are the only dependencies in the project, and they are dev-only:
+      # the published site still loads plain scripts with no build step.
+      - name: Install test-only dependencies
+        run: npm install --no-audit --no-fund
+      - name: Run the online-play test suite
+        run: node tests/net.test.mjs
+
   deploy:
     needs: test
     if: >-

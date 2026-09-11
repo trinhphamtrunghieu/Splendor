@@ -6,16 +6,17 @@ game is static HTML, CSS and plain JavaScript.
 
 *(Tiếng Việt bên dưới — the game interface itself defaults to Vietnamese and has an EN/VI switch.)*
 
-## Two ways to play
+## Three ways to play
 
 | Mode | What it is |
 | --- | --- |
 | **Single player** | You against 1–3 computer opponents, at easy / normal / hard. |
 | **Multiplayer (pass-and-play)** | 2–4 people sharing one phone, tablet or computer, taking turns. An optional privacy screen blanks the board between turns so nobody sees the reserved cards of the player before them. |
+| **Online** | 2–4 people on their own devices, anywhere. One player creates a room, the others type the 5-character code. Still no server of ours: the browsers talk through a public MQTT broker. Bots can fill empty seats. |
 
-Both modes run entirely on the device. Because GitHub Pages only serves static files, there is
-no networked lobby — "multiplayer" means everyone plays on the same screen, which is also how
-the physical game is played.
+Single player and pass-and-play run entirely on the device. Online play adds no server of ours
+either — see [Online play](#online-play) for how a static page manages that, and what the
+trade-offs are.
 
 ## Features
 
@@ -24,6 +25,9 @@ the physical game is played.
   (take 3 gems, take a pair, buy, reserve) wait until you have actually made the move with
   the same buttons a normal game uses. Skippable at any point, and it never touches your
   saved game.
+- **Online play with no server**: rooms over MQTT-on-WebSocket, host-authoritative, with
+  hidden information actually hidden — each player is sent only what Splendor's rules let them
+  see. Reconnects, refreshes and dropped players are handled.
 - Complete Splendor ruleset: 90 development cards, 10 noble tiles, gold wildcards, the
   10-token limit, reserving from the deck, the final round after 15 points and the
   fewest-cards tiebreak.
@@ -97,6 +101,59 @@ The first player to 15 points triggers the last round; when it finishes, the hig
 wins, and a tie goes to whoever bought fewer cards. The in-game **Rules** dialog has the full
 text in both languages.
 
+## Online play
+
+There is no game server, and nothing to deploy beyond the static page. Instead:
+
+- One player **hosts**. Their browser holds the only authoritative game state and applies every
+  move with the same rules engine the offline game uses — it is the referee.
+- The others **join** with a 5-character room code and send the host their intended moves.
+- Messages travel through a **public MQTT broker over WebSocket** (EMQX by default; HiveMQ and
+  Mosquitto are offered, and you can point it at your own). A broker is a message bus, not a
+  game server: it stores no game logic and knows nothing about Splendor.
+
+```
+ guest ──intent──►┐                        ┌──► guest   (redacted view)
+                  ├── MQTT broker ── host ─┤
+ guest ──intent──►┘   (relay only)  referee└──► guest   (redacted view)
+```
+
+**Hidden information stays hidden.** Each player's view is redacted before it is published: the
+decks become counts, and other players' reserved cards become blanks. You receive only what the
+rules let you see, so an opponent cannot read the deck order out of devtools. Everything
+Splendor plays face up — the bank, the table, discounts, scores — is sent as-is.
+
+**The referee refuses bad moves.** The host validates every incoming move against the engine:
+out-of-turn messages and illegal moves change nothing and the sender is re-synced.
+
+**Reconnecting works.** The room and each player's view are published as MQTT *retained*
+messages, so the broker hands a returning player the current state with nobody having to ask.
+Refresh the page and press "Back to your last room"; a host who reloads resumes the same room
+with the game intact, because the host also saves it locally.
+
+### Limitations, stated plainly
+
+- **The host must stay.** Their browser is the referee. If they close the tab the room ends —
+  though the host can reload and resume, and everyone else reconnects to it.
+- **A public broker is public.** Room codes are 5 characters from a 32-character alphabet
+  (~34 million combinations), which is fine for playing with friends, but anyone who guessed a
+  code could watch that room's traffic. Nothing sensitive is transmitted — names, gems and
+  cards. Point the broker field at your own broker if you would rather not use a shared one.
+- **No anti-cheat beyond redaction.** A determined host could inspect their own game state;
+  they are the referee, after all. Play with people you like.
+- **wss:// is required.** The published site is https, so a `ws://` broker is blocked by the
+  browser as mixed content. All the built-in options are `wss://`.
+
+### How it is built
+
+`assets/js/mqtt-lite.js` is a small MQTT 3.1.1 client over WebSocket — QoS 0, retained
+messages, last will, keepalive and reconnect, in about two hundred lines. mqtt.js would do the
+same, but its browser bundle is 369 KB, roughly twenty times the size of the rest of the game.
+
+`assets/js/net.js` is the room protocol on top: topics under `splendor/v1/<room>/`, the seat
+roster, per-player redacted views, and the join/intent/last-will messages. It touches no DOM,
+which is what lets the whole thing be tested headlessly.
+
 ## Artwork, and using real images
 
 Out of the box every gem, card face and noble tile is **drawn**: `assets/js/art.js` holds one
@@ -136,13 +193,16 @@ assets/js/data.js          the 90 cards and 10 nobles, generated from cost patte
 assets/js/engine.js        rules engine — pure state machine, no DOM
 assets/js/ai.js            computer opponents (one-ply search + evaluation)
 assets/js/i18n.js          Vietnamese and English strings
+assets/js/mqtt-lite.js     minimal MQTT-over-WebSocket client (no dependencies)
+assets/js/net.js           online rooms: host/guest protocol, redacted views
 assets/js/art.js           gem artwork (SVG sprite) + the optional photo layer
 assets/img/manifest.js     which real image files are installed, if any
 assets/js/tutorial.js      the guided walkthrough (scripted board + coach marks)
 assets/js/ui.js            rendering and dialogs
 assets/js/app.js           controller — menus, turn loop, persistence
 tools/fetch-art.js         downloads free-licensed portraits and gem photographs
-tests/engine.test.js       rules tests + self-play invariant check
+tests/engine.test.js       rules, artwork, MQTT codec and redaction (no dependencies)
+tests/net.test.mjs         online play against a real broker (needs npm install)
 ```
 
 The engine never touches the DOM and never produces user-facing text: failures come back as
@@ -153,14 +213,24 @@ disagree about the rules.
 Run the tests with:
 
 ```bash
-node tests/engine.test.js
+node tests/engine.test.js    # everything that needs no network
+npm install && npm run test:net   # online play, against a real broker
 ```
+
+`npm install` pulls in `aedes` and `ws`. They are **dev-only**: the published page still loads
+plain scripts with no build step and no runtime dependencies.
 
 They cover deck composition, each turn action and its rejections, the token limit, noble
 visits and choices, the final round, tiebreaks, and 60 bot-vs-bot games checking that tokens
 and prestige points are conserved and that every game terminates. They also replay the
 tutorial's scripted moves through the engine, so the walkthrough cannot quietly start giving
-instructions that no longer work. For a deeper soak, raise
+instructions that no longer work, and they check the MQTT wire format (varint boundaries, UTF-8
+lengths, topic-filter matching) and the view redaction.
+
+`tests/net.test.mjs` starts a real MQTT broker in-process and runs the real client and protocol
+against it: retained messages, last-will on an abrupt drop, reconnect-and-resubscribe, a
+four-seat game played to a finish over the wire, refusal of out-of-turn and illegal moves, and
+that closing a room leaves nothing behind on the broker. For a deeper soak, raise
 the game count:
 
 ```bash
@@ -181,14 +251,17 @@ compact and guarantees the colour balance of the printed game.
 Bản cài đặt mã nguồn mở của board game **Splendor**, chạy trực tiếp trong trình duyệt và
 host trên GitHub Pages. Không cần build, không cần server, không cần đăng nhập.
 
-## Hai chế độ
+## Ba chế độ
 
 - **Một người** — bạn đấu với 1–3 máy, ba mức độ khó: Dễ / Thường / Khó.
 - **Nhiều người** — 2–4 người chơi luân phiên trên cùng một thiết bị. Có thể bật *màn che khi
   đổi lượt* để người sau không thấy thẻ mà người trước đang giữ.
+- **Chơi qua mạng** — 2–4 người ở xa nhau, mỗi người một máy. Một người tạo phòng, những người
+  khác nhập mã 5 ký tự. Vẫn không cần server riêng: các trình duyệt nói chuyện qua một broker
+  MQTT công cộng. Có thể thêm máy vào chỗ còn trống.
 
-Vì GitHub Pages chỉ phục vụ file tĩnh nên không có chế độ chơi qua mạng: "nhiều người" nghĩa là
-cùng chơi trên một máy — đúng như khi chơi bàn thật.
+Chế độ một người và nhiều người trên cùng máy chạy hoàn toàn trong máy bạn. Chế độ qua mạng
+cũng không cần server nào của chúng ta — xem phần *Chơi qua mạng* bên dưới.
 
 ## Điểm nổi bật
 
@@ -211,6 +284,39 @@ cùng chơi trên một máy — đúng như khi chơi bàn thật.
 - Giao diện **Tiếng Việt và English**, đổi lúc nào cũng được.
 - Tự lưu ván đang chơi, mở lại trình duyệt vẫn tiếp tục được.
 - Thêm được vào màn hình chính như một ứng dụng, chơi offline sau lần tải đầu.
+
+## Chơi qua mạng
+
+Không có game server, và không phải deploy gì thêm ngoài trang tĩnh:
+
+- Một người **làm chủ phòng**. Máy của họ giữ state thật và áp dụng mọi nước đi bằng đúng bộ
+  luật mà chế độ offline dùng — họ là trọng tài.
+- Những người khác **vào phòng** bằng mã 5 ký tự rồi gửi nước đi của mình cho chủ phòng.
+- Tin nhắn đi qua **broker MQTT công cộng trên WebSocket** (mặc định EMQX; có thêm HiveMQ,
+  Mosquitto, và bạn có thể trỏ sang broker riêng). Broker chỉ là đường truyền tin, không chứa
+  logic game.
+
+**Thông tin riêng được giữ riêng.** Trước khi gửi, state được lược bỏ theo từng người: bộ thẻ
+chỉ còn số lượng, thẻ đã giữ của người khác thành ô trống. Bạn chỉ nhận đúng những gì luật cho
+phép thấy, nên đối thủ không thể mở devtools ra đọc thứ tự bộ thẻ.
+
+**Trọng tài từ chối nước đi sai.** Chủ phòng kiểm tra mọi nước đi: đi khi chưa tới lượt, hoặc
+nước đi không hợp luật, đều không làm gì cả và người gửi được đồng bộ lại.
+
+**Mất kết nối vẫn vào lại được.** Thông tin phòng và view của từng người được publish dạng
+*retained*, nên broker tự trao lại state cho người quay lại. Refresh trang rồi bấm “Vào lại
+phòng gần nhất”. Chủ phòng refresh cũng mở lại đúng phòng đó vì state được lưu trong máy.
+
+### Hạn chế cần biết
+
+- **Chủ phòng phải ở lại** — máy họ là trọng tài. Đóng tab là phòng dừng (nhưng mở lại và tiếp
+  tục được, mọi người tự kết nối lại).
+- **Broker công cộng là công cộng.** Mã phòng 5 ký tự từ bộ 32 ký tự (~34 triệu tổ hợp), đủ an
+  toàn để chơi với bạn bè, nhưng ai đoán đúng mã thì xem được lưu lượng phòng đó. Không có gì
+  quan trọng được truyền — chỉ tên, đá quý và thẻ. Muốn kín hơn thì trỏ sang broker riêng.
+- **Không chống gian lận ngoài việc lược bỏ thông tin.** Chủ phòng vẫn xem được state của chính
+  họ — họ là trọng tài mà. Hãy chơi với người bạn tin.
+- **Phải dùng wss://** vì trang chạy trên https; broker `ws://` sẽ bị trình duyệt chặn.
 
 ## Mới chơi lần đầu?
 

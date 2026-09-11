@@ -8,6 +8,8 @@ require('../assets/js/engine.js');
 require('../assets/js/ai.js');
 require('../assets/js/tutorial.js');
 require('../assets/js/art.js');
+require('../assets/js/mqtt-lite.js');
+require('../assets/js/net.js');
 var fetchArt = require('../tools/fetch-art.js');
 
 var D = window.SplendorData;
@@ -15,6 +17,8 @@ var E = window.SplendorEngine;
 var AI = window.SplendorAI;
 var Tut = window.SplendorTutorial;
 var Art = window.SplendorArt;
+var M = window.MqttLite;
+var Net = window.SplendorNet;
 
 var passed = 0;
 var failed = 0;
@@ -394,6 +398,136 @@ check('legalActions never offers an unaffordable purchase', function () {
   E.legalActions(state).forEach(function (action) {
     if (action.type === 'buy') assert(E.canAfford(state.players[0], action.card), 'offered ' + action.cardId);
   });
+});
+
+console.log('\nMQTT wire format');
+
+check('remaining-length varints round-trip across every byte boundary', function () {
+  [[0, 1], [1, 1], [127, 1], [128, 2], [16383, 2], [16384, 3], [2097151, 3], [2097152, 4]]
+    .forEach(function (pair) {
+      var encoded = M._codec.encodeLength(pair[0]);
+      eq(encoded.length, pair[1], 'byte count for ' + pair[0]);
+      var decoded = M._codec.decodeLength(Uint8Array.from([0].concat(encoded)), 1);
+      eq(decoded.value, pair[0], 'decoded ' + pair[0]);
+      eq(decoded.length, pair[1]);
+    });
+});
+
+check('an incomplete varint reports "not yet", not a wrong answer', function () {
+  eq(M._codec.decodeLength(Uint8Array.from([0x30, 0x80]), 1), null);
+});
+
+check('utf-8 survives the wire, including Vietnamese and emoji', function () {
+  var text = 'Hiếu — Lượt của bạn 💎';
+  eq(M._codec.fromUtf8(Uint8Array.from(M._codec.utf8(text))), text);
+});
+
+check('a string is length-prefixed with its byte count, not its character count', function () {
+  var encoded = M._codec.encodeString('đá');      // 2 characters, 4 bytes
+  eq([encoded[0], encoded[1]], [0, 4]);
+  eq(encoded.length, 6);
+});
+
+check('the fixed header carries the type, flags and length', function () {
+  var bytes = M._codec.packet(3, 1, [1, 2, 3]);   // PUBLISH, retain
+  eq(bytes[0], 0x31);
+  eq(bytes[1], 3);
+  eq(bytes.length, 5);
+});
+
+check('topic filters match the way MQTT says they should', function () {
+  assert(M.matches('a/b/c', 'a/b/c'), 'exact');
+  assert(M.matches('a/+/c', 'a/b/c'), 'single level');
+  assert(M.matches('a/#', 'a/b/c'), 'multi level');
+  assert(M.matches('#', 'a/b'), 'bare hash');
+  assert(!M.matches('a/+', 'a/b/c'), '+ is one level only');
+  assert(!M.matches('a/b', 'a/b/c'), 'longer topic');
+  assert(!M.matches('a/b/c', 'a/b'), 'shorter topic');
+  assert(!M.matches('x/#', 'a/b'), 'different root');
+});
+
+console.log('\nonline rooms');
+
+check('room codes avoid the characters people mistype', function () {
+  for (var i = 0; i < 200; i++) {
+    var code = Net.roomCode();
+    eq(code.length, 5, 'length of ' + code);
+    assert(!/[IO01]/.test(code), 'ambiguous character in ' + code);
+    assert(Net.isValidCode(code), 'generated an invalid code: ' + code);
+  }
+});
+
+check('codes are read leniently and validated strictly', function () {
+  eq(Net.normaliseCode(' ab-c23 '), 'ABC23');
+  eq(Net.normaliseCode('abc23xxxx'), 'ABC23');
+  assert(Net.isValidCode('abc23'), 'lower case is fine');
+  assert(!Net.isValidCode('ABC2'), 'too short');
+  assert(!Net.isValidCode('ABCIO'), 'contains excluded letters');
+  assert(!Net.isValidCode(''), 'empty');
+});
+
+check('topics are namespaced per room', function () {
+  eq(Net.topic('ABC23', 'state'), 'splendor/v1/ABC23/state');
+  eq(Net.topic('ABC23', 'view/p-1'), 'splendor/v1/ABC23/view/p-1');
+});
+
+check("a player's view hides what the rules say is secret", function () {
+  var state = E.createGame({
+    players: [{ name: 'A', type: 'human' }, { name: 'B', type: 'human' }],
+    seed: 99
+  });
+  state.players[0].reserved.push(state.decks[3].pop());
+  state.players[1].reserved.push(state.decks[2].pop());
+
+  var view = Net.viewFor(state, 1);
+
+  eq(view.decks[1].length, state.decks[1].length, 'the deck count stays visible');
+  assert(view.decks[1].every(function (c) { return c === null; }), 'deck order must not leak');
+  assert(view.decks[3].every(function (c) { return c === null; }), 'tier 3 deck must not leak');
+
+  assert(view.players[1].reserved[0].cost, 'my own reserved card is mine to see');
+  eq(view.players[0].reserved.length, 1, 'the count of a rival hand is public');
+  eq(view.players[0].reserved[0], { hidden: true }, 'but not what it is');
+
+  // everything Splendor plays face up must survive
+  eq(view.tokens, state.tokens, 'bank');
+  eq(view.board, state.board, 'cards on the table');
+  eq(view.nobles, state.nobles, 'nobles');
+  eq(view.players[0].bonuses, state.players[0].bonuses, 'rival discounts are public');
+  eq(view.players[0].tokens, state.players[0].tokens, 'rival gems are public');
+  eq(view.players[0].points, state.players[0].points, 'rival score is public');
+});
+
+check('redaction does not disturb the real game', function () {
+  var state = E.createGame({ players: [{ name: 'A' }, { name: 'B' }], seed: 5 });
+  var before = JSON.stringify(state);
+  Net.viewFor(state, 0);
+  Net.viewFor(state, 1);
+  eq(JSON.stringify(state), before, 'viewFor must not mutate the state it redacts');
+});
+
+check('every action the network can relay is understood by the engine', function () {
+  var state = E.createGame({ players: [{ name: 'A' }, { name: 'B' }], seed: 11 });
+  eq(E.applyAction(state, { type: 'take', colors: ['white', 'blue', 'green'] }).ok, true);
+  state.current = 0;
+  var card = state.board[1][0];
+  eq(E.applyAction(state, { type: 'reserve', cardId: card.id }).ok, true);
+  state.current = 0;
+  eq(E.applyAction(state, { type: 'reserveDeck', tier: 2 }).ok, true);
+  state.current = 0;
+  eq(E.applyAction(state, { type: 'nonsense' }).error, 'err.generic', 'unknown types are refused');
+  // the two phase actions the protocol also has to carry
+  eq(E.applyAction(state, { type: 'discard', pile: { white: 1 } }).error, 'err.nothingToReturn');
+  eq(E.applyAction(state, { type: 'noble', nobleId: 'n1' }).error, 'err.noNoble');
+});
+
+check('the default brokers are all wss, or an https page could not use them', function () {
+  assert(Net.BROKERS.length >= 1, 'at least one broker');
+  Net.BROKERS.forEach(function (broker) {
+    assert(/^wss:\/\//.test(broker.url), broker.id + ' must be wss: ' + broker.url);
+    assert(broker.label && broker.id, 'broker needs a label and id');
+  });
+  eq(Net.MAX_SEATS, 4, 'Splendor seats at most four');
 });
 
 console.log('\nartwork');
