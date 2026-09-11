@@ -48,14 +48,22 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 ## Deploying to GitHub Pages
 
-The workflow in `.github/workflows/pages.yml` publishes the repository root on every push to
-the default branch. Enable it once:
+The site is plain static files at the repository root, so either Pages source works.
 
-1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
-2. Push to the default branch (or run the workflow manually from the Actions tab).
+**Option A — GitHub Actions (runs the tests first).** In
+**Settings → Pages → Build and deployment**, set **Source: GitHub Actions**. The workflow in
+`.github/workflows/pages.yml` then runs `tests/engine.test.js` on every push and publishes the
+repository root when the push is to the default branch (whatever it is named) or when you run
+the workflow by hand from the Actions tab. If the deploy step is rejected because the
+`github-pages` environment only allows the default branch, either merge this branch into the
+default branch or add the branch under **Settings → Environments → github-pages → Deployment
+branches**.
 
-The workflow runs the test suite first and only deploys if it passes. A `.nojekyll` file keeps
-GitHub from running Jekyll over the assets.
+**Option B — deploy from a branch (no Actions).** In **Settings → Pages**, set
+**Source: Deploy from a branch**, pick the branch and the `/ (root)` folder. Nothing needs to
+be built.
+
+A `.nojekyll` file keeps GitHub from running Jekyll over the assets.
 
 ## How to play (short version)
 
