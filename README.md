@@ -107,7 +107,8 @@ There is no game server, and nothing to deploy beyond the static page. Instead:
 
 - One player **hosts**. Their browser holds the only authoritative game state and applies every
   move with the same rules engine the offline game uses — it is the referee.
-- The others **join** with a 5-character room code and send the host their intended moves.
+- The others **join** with a 5-character room code, or by opening the invite link the lobby
+  shows (`…/index.html?room=ABC23`), and send the host their intended moves.
 - Messages travel through a **public MQTT broker over WebSocket** (EMQX by default; HiveMQ and
   Mosquitto are offered, and you can point it at your own). A broker is a message bus, not a
   game server: it stores no game logic and knows nothing about Splendor.
@@ -129,7 +130,18 @@ out-of-turn messages and illegal moves change nothing and the sender is re-synce
 **Reconnecting works.** The room and each player's view are published as MQTT *retained*
 messages, so the broker hands a returning player the current state with nobody having to ask.
 Refresh the page and press "Back to your last room"; a host who reloads resumes the same room
-with the game intact, because the host also saves it locally.
+with the game intact, because the host also saves it locally. Identity is per tab, so two tabs
+on one machine are two players — handy for trying it out on your own.
+
+**Nothing waits silently.** Each way this can fail says so, because a spinner that never
+resolves is indistinguishable from a bug:
+
+| What happened | What you see |
+| --- | --- |
+| The broker is blocked or down | *Could not reach broker.emqx.io:8084 … try a different one*, with a **Change broker** button |
+| The room code does not exist | *No room ABC23 found. Check the code, and make sure both of you are on the same broker* — and it recovers by itself if the host turns up later |
+| The host's tab dies | The broker publishes the host's *last will*, so everyone is told the game is paused; it resumes by itself the moment the host is back |
+| Connection drops | The client reconnects with backoff and re-subscribes; the room chip in the top bar turns red while it is down |
 
 ### Limitations, stated plainly
 
@@ -153,6 +165,12 @@ same, but its browser bundle is 369 KB, roughly twenty times the size of the res
 `assets/js/net.js` is the room protocol on top: topics under `splendor/v1/<room>/`, the seat
 roster, per-player redacted views, and the join/intent/last-will messages. It touches no DOM,
 which is what lets the whole thing be tested headlessly.
+
+Tested against a real broker started in-process (`tests/net.test.mjs`, 37 checks) and, by hand,
+in two real browsers playing each other — including two tabs of one browser, a shared invite
+link, a room code that does not exist, an unreachable broker, and killing the host's connection
+mid-game. Those browser runs are not in CI, which needs no browser download; the headless suite
+covers the protocol and the wire format.
 
 ## Artwork, and using real images
 
@@ -313,7 +331,8 @@ Không có game server, và không phải deploy gì thêm ngoài trang tĩnh:
 
 - Một người **làm chủ phòng**. Máy của họ giữ state thật và áp dụng mọi nước đi bằng đúng bộ
   luật mà chế độ offline dùng — họ là trọng tài.
-- Những người khác **vào phòng** bằng mã 5 ký tự rồi gửi nước đi của mình cho chủ phòng.
+- Những người khác **vào phòng** bằng mã 5 ký tự, hoặc mở thẳng **link mời** mà phòng chờ hiện
+  ra (`…/index.html?room=ABC23`), rồi gửi nước đi của mình cho chủ phòng.
 - Tin nhắn đi qua **broker MQTT công cộng trên WebSocket** (mặc định EMQX; có thêm HiveMQ,
   Mosquitto, và bạn có thể trỏ sang broker riêng). Broker chỉ là đường truyền tin, không chứa
   logic game.
@@ -328,6 +347,17 @@ nước đi không hợp luật, đều không làm gì cả và người gửi 
 **Mất kết nối vẫn vào lại được.** Thông tin phòng và view của từng người được publish dạng
 *retained*, nên broker tự trao lại state cho người quay lại. Refresh trang rồi bấm “Vào lại
 phòng gần nhất”. Chủ phòng refresh cũng mở lại đúng phòng đó vì state được lưu trong máy.
+Danh tính tính theo từng tab, nên mở 2 tab trên cùng máy là 2 người chơi — tiện để thử một mình.
+
+**Không có chỗ nào chờ im lặng.** Mỗi kiểu lỗi đều nói rõ, vì một vòng xoay không bao giờ dừng
+thì không phân biệt được với hỏng:
+
+| Chuyện gì xảy ra | Bạn thấy gì |
+| --- | --- |
+| Broker bị chặn hoặc chết | *Không kết nối được tới broker.emqx.io:8084…* kèm nút **Đổi broker** |
+| Mã phòng không tồn tại | *Không tìm thấy phòng ABC23…* — và tự khỏi nếu sau đó chủ phòng mở phòng |
+| Tab chủ phòng chết | Broker gửi *last will* của chủ phòng, mọi người được báo ván tạm dừng; chủ phòng quay lại là ván chạy tiếp |
+| Mạng chớp tắt | Client tự kết nối lại và đăng ký lại; chip mã phòng ở thanh trên chuyển đỏ khi đang mất kết nối |
 
 ### Hạn chế cần biết
 

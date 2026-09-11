@@ -96,13 +96,23 @@
       phase: 'lobby',
       hostId: null,
       seq: 0,
-      lastError: null
+      joined: false,            // a room message has actually arrived
+      hostGone: false,          // the broker told us the host dropped
+      lastError: null,          // a coded failure the UI must explain
+      notice: null              // transient chatter, e.g. "reconnecting"
     };
 
     var client = null;
     var listeners = {};
     var state = null;           // host only: the authoritative game
     var wantsLeave = false;
+    var connectTimer = null;    // the broker never answered
+    var roomTimer = null;       // the broker answered but the room is not there
+
+    /* Long enough for a slow mobile connection, short enough that nobody sits
+       watching "connecting" wondering whether it is broken. */
+    var CONNECT_TIMEOUT = options.connectTimeout || 6500;
+    var ROOM_TIMEOUT = options.roomTimeout || 7000;
 
     net.on = function (name, fn) {
       (listeners[name] = listeners[name] || []).push(fn);
@@ -115,16 +125,31 @@
       });
     }
 
-    function report(message) {
-      net.lastError = message || null;
+    /* A coded reason the UI is expected to explain to the player. */
+    function report(code) {
+      net.lastError = code || null;
       emit('status', status());
+    }
+
+    /* Something worth showing but not a failure. */
+    function notice(message) {
+      net.notice = message || null;
+      emit('status', status());
+    }
+
+    function clearError(code) {
+      if (!code || net.lastError === code) {
+        net.lastError = null;
+        emit('status', status());
+      }
     }
 
     function status() {
       return {
         role: net.role, room: net.room, clientId: net.clientId,
-        connected: net.connected, phase: net.phase,
-        seats: net.seats.slice(), error: net.lastError,
+        connected: net.connected, phase: net.phase, joined: net.joined,
+        hostGone: net.hostGone,
+        seats: net.seats.slice(), error: net.lastError, notice: net.notice,
         brokerUrl: net.brokerUrl
       };
     }
@@ -157,15 +182,33 @@
         keepalive: 45,
         will: will
       });
-      client.on('error', function (err) { report(err && err.message); });
+
+      /* A broker that is blocked rather than absent leaves the socket sitting
+         in CONNECTING with no error at all, so give up saying "connecting"
+         after a while and tell the player. Reconnection continues underneath. */
+      clearTimeout(connectTimer);
+      connectTimer = setTimeout(function () {
+        if (!net.connected) report('broker-unreachable');
+      }, CONNECT_TIMEOUT);
+
+      client.on('error', function () { /* the close/timeout paths report */ });
       client.on('close', function () {
         net.connected = false;
         emit('status', status());
       });
       client.on('reconnect', function (info) {
-        report('reconnecting (attempt ' + info.attempt + ')');
+        notice('reconnect-' + info.attempt);
       });
       return client;
+    }
+
+    /* The host publishes the room as a retained message, so a room that exists
+       answers within a moment. Silence means there is no such room (yet). */
+    function watchForRoom() {
+      clearTimeout(roomTimer);
+      roomTimer = setTimeout(function () {
+        if (!net.joined) report('room-not-found');
+      }, ROOM_TIMEOUT);
     }
 
     /* ------------------------------------------------------------- hosting */
@@ -177,10 +220,19 @@
       net.phase = 'lobby';
       net.seats = [{ id: net.clientId, name: config.name || 'Host', type: 'human', online: true }];
 
-      openSocket(config.brokerUrl, null);
+      /* If the host's tab dies the guests would otherwise sit in front of a
+         frozen board forever, so let the broker announce it for us. */
+      openSocket(config.brokerUrl, {
+        topic: topic(net.room, 'hostgone'),
+        payload: JSON.stringify({ t: 'hostgone', id: net.clientId })
+      });
       client.on('connect', function () {
         net.connected = true;
-        net.lastError = null;
+        net.joined = true;               // the host *is* the room
+        net.notice = null;
+        clearTimeout(connectTimer);
+        clearError();
+        client.publish(topic(net.room, 'hostgone'), '', { retain: true });
         client.subscribe(topic(net.room, 'join'));
         client.subscribe(topic(net.room, 'intent'));
         client.subscribe(topic(net.room, 'bye/+'));
@@ -303,11 +355,15 @@
 
       client.on('connect', function () {
         net.connected = true;
-        net.lastError = null;
+        net.notice = null;
+        clearTimeout(connectTimer);
+        clearError('broker-unreachable');
         client.subscribe(topic(net.room, 'room'));
         client.subscribe(topic(net.room, 'view/' + net.clientId));
         client.subscribe(topic(net.room, 'reject/' + net.clientId));
+        client.subscribe(topic(net.room, 'hostgone'));
         publish('join', { t: 'join', id: net.clientId, name: config.name || 'Player' });
+        watchForRoom();
         emit('status', status());
       });
 
@@ -315,7 +371,20 @@
         var message = parse(payload);
         if (!message) return;                              // '' clears a retained topic
 
+        if (topicName === topic(net.room, 'hostgone')) {
+          /* Not necessarily final: a host who lost signal reconnects and
+             publishes the room again, which clears this. */
+          net.hostGone = true;
+          report('host-gone');
+          emit('hostgone', message);
+          return;
+        }
         if (topicName === topic(net.room, 'room')) {
+          net.joined = true;
+          net.hostGone = false;
+          clearTimeout(roomTimer);
+          clearError('room-not-found');
+          clearError('host-gone');
           net.seats = message.seats || [];
           net.phase = message.phase || 'lobby';
           net.hostId = message.hostId || null;
@@ -343,6 +412,9 @@
 
     net.leave = function () {
       wantsLeave = true;
+      clearTimeout(connectTimer);
+      clearTimeout(roomTimer);
+      net.joined = false;
       if (!client) return;
       if (net.role === 'host') {
         net.phase = 'closed';

@@ -63,8 +63,8 @@
     if (App.mode === 'online') {
       // Only the host holds the real game; guests can always be re-sent theirs.
       if (App.role !== 'host') return;
-      if (App.state.phase === 'gameover') { drop(ONLINE_KEY); return; }
-      store(ONLINE_KEY, {
+      if (App.state.phase === 'gameover') { session(ONLINE_KEY, null); return; }
+      session(ONLINE_KEY, {
         role: 'host', room: App.net && App.net.room, brokerUrl: App.settings.broker,
         seats: App.net ? App.net.seats : [], state: App.state
       });
@@ -74,9 +74,20 @@
     store(SAVE_KEY, { mode: App.mode, state: App.state });
   }
 
+  /* Per tab, not per browser: two tabs on one machine are two players, and a
+     refresh in either keeps its own seat. */
+  function session(key, value) {
+    try {
+      if (value === undefined) return JSON.parse(sessionStorage.getItem(key));
+      if (value === null) sessionStorage.removeItem(key);
+      else sessionStorage.setItem(key, JSON.stringify(value));
+    } catch (err) { /* private mode */ }
+    return null;
+  }
+
   function clientId() {
-    var id = load(CLIENT_KEY);
-    if (!id) { id = 'p-' + Math.random().toString(36).slice(2, 10); store(CLIENT_KEY, id); }
+    var id = session(CLIENT_KEY);
+    if (!id) { id = 'p-' + Math.random().toString(36).slice(2, 10); session(CLIENT_KEY, id); }
     return id;
   }
 
@@ -85,6 +96,14 @@
   /* ---------------------------------------------------------- helpers */
 
   function $(id) { return document.getElementById(id); }
+
+  /* Exactly one screen is ever visible. Switching them by hand is how the
+     lobby ended up still on screen underneath a running game. */
+  function showScreen(id) {
+    Array.prototype.forEach.call(document.querySelectorAll('.screen'), function (screen) {
+      screen.classList.toggle('is-active', screen.id === id);
+    });
+  }
 
   function humanCount(state) {
     return state.players.filter(function (p) { return p.type === 'human'; }).length;
@@ -144,21 +163,34 @@
     };
   }
 
-  function copyRoomCode() {
-    var code = App.net && App.net.room;
-    if (!code) return;
-    var done = function () { UI.toast(t('net.copied', { code: code }), 'good'); };
+  function copyText(text, message) {
+    var done = function () { UI.toast(message, 'good'); };
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(code).then(done, done);
+      navigator.clipboard.writeText(text).then(done, done);
     } else {
-      done();
+      done();                            // clipboard blocked: the value is on screen anyway
     }
+  }
+
+  /* A link is easier to send than five characters read out loud. */
+  function roomLink(code) {
+    return location.origin + location.pathname + '?room=' + encodeURIComponent(code);
+  }
+
+  function roomFromUrl() {
+    var match = /[?&]room=([^&#]+)/.exec(location.search) || /#room=([^&]+)/.exec(location.hash);
+    if (!match) return null;
+    var code = Net.normaliseCode(decodeURIComponent(match[1]));
+    return Net.isValidCode(code) ? code : null;
   }
 
   function renderOnlineSetup() {
     $('online-setup').hidden = false;
     $('setup').hidden = true;
-    $('online-name').value = App.settings.onlineName || '';
+    /* Pre-filled so the field is never blank, but not saved: whether the
+       player has actually chosen a name decides if an invite link may skip
+       straight into the room. */
+    $('online-name').value = (App.settings.onlineName || '').trim() || t('menu.you');
     $('broker-url').value = App.settings.broker || Net.BROKERS[0].url;
     buildSeg($('broker-seg'), Net.BROKERS.map(function (b) { return b.id; }), brokerId(),
       function (id) {
@@ -213,15 +245,13 @@
     clearTimeout(App.aiTimer);
     Tutorial.stop();
     document.body.classList.remove('is-curtained');
-    $('screen-game').classList.remove('is-active');
-    $('screen-lobby').classList.remove('is-active');
-    $('screen-menu').classList.add('is-active');
+    showScreen('screen-menu');
     if (App.mode === 'online') { App.mode = 'single'; }
     var saved = load(SAVE_KEY);
     $('resume-btn').hidden = !(saved && saved.state && saved.state.phase !== 'gameover');
 
     // First visit: point newcomers at the walkthrough rather than the board.
-    var hosted = load(ONLINE_KEY);
+    var hosted = session(ONLINE_KEY);
     $('resume-online-btn').hidden = !(hosted && hosted.room &&
       (hosted.role === 'guest' || hosted.state));
 
@@ -278,8 +308,7 @@
   }
 
   function enterGame() {
-    $('screen-menu').classList.remove('is-active');
-    $('screen-game').classList.add('is-active');
+    showScreen('screen-game');
     UI.closeModal();
     applyI18n();
     step();
@@ -317,7 +346,7 @@
       App.seat = message.seat;
       App.state = message.state;
       App.pending = false;
-      if ($('screen-game').classList.contains('is-active') === false) enterGame();
+      if (!$('screen-game').classList.contains('is-active')) enterGame();
       syncGuest();
     });
 
@@ -329,6 +358,12 @@
       if (!result.ok) { net.broadcast(App.state); return; }    // refused: re-sync them
       App.picked = [];
       step();
+    });
+
+    net.on('hostgone', function () {
+      UI.toast(t('net.err.hostGone'), 'error');
+      renderLobby();
+      renderNetChip();
     });
 
     net.on('seated', function () { renderLobby(); });
@@ -394,7 +429,7 @@
     App.picked = [];
     App.pending = false;
     net.join({ room: code, name: onlineName(), brokerUrl: App.settings.broker });
-    store(ONLINE_KEY, { role: 'guest', room: Net.normaliseCode(code), brokerUrl: App.settings.broker });
+    session(ONLINE_KEY, { role: 'guest', room: Net.normaliseCode(code), brokerUrl: App.settings.broker });
     showLobby();
   }
 
@@ -421,7 +456,7 @@
     App.seat = -1;
     App.state = null;
     App.pending = false;
-    drop(ONLINE_KEY);
+    session(ONLINE_KEY, null);
     if (message) UI.toast(message, 'error');
     showMenu();
   }
@@ -429,11 +464,37 @@
   function showLobby() {
     clearTimeout(App.aiTimer);
     Tutorial.stop();
-    $('screen-menu').classList.remove('is-active');
-    $('screen-game').classList.remove('is-active');
-    $('screen-lobby').classList.add('is-active');
+    showScreen('screen-lobby');
     applyI18n();
     renderLobby();
+  }
+
+  /* What the lobby should say. Being connected to a broker is not the same as
+     being in a room, and neither is the same as the room having started — a
+     player stuck on any of those deserves to be told which. */
+  function lobbyStatus(st) {
+    if (st.error === 'room-full') return { text: t('net.roomFull'), cls: 'is-error' };
+    if (st.error === 'room-in-progress') return { text: t('net.roomInProgress'), cls: 'is-error' };
+    if (st.error === 'broker-unreachable') {
+      return { text: t('net.err.brokerUnreachable', { url: shortBroker(st.brokerUrl) }), cls: 'is-error' };
+    }
+    if (st.error === 'room-not-found') {
+      return { text: t('net.err.roomNotFound', { code: st.room }), cls: 'is-error' };
+    }
+    if (st.hostGone) return { text: t('net.err.hostGone'), cls: 'is-error' };
+    if (!st.connected) {
+      var retry = /^reconnect-(\d+)$/.exec(st.notice || '');
+      if (retry) return { text: t('net.reconnecting', { n: retry[1] }), cls: '' };
+      return { text: t('net.connecting'), cls: '' };
+    }
+    if (App.role === 'guest' && !st.joined) {
+      return { text: t('net.searchingRoom', { code: st.room }), cls: '' };
+    }
+    return { text: t(App.role === 'host' ? 'net.hostWaiting' : 'net.guestWaiting'), cls: 'is-ok' };
+  }
+
+  function shortBroker(url) {
+    return String(url || '').replace(/^wss?:\/\//, '').split('/')[0];
   }
 
   function renderLobby() {
@@ -443,12 +504,16 @@
     var st = net.status();
 
     $('room-code-value').textContent = st.room || '—';
-    $('lobby-status').textContent = st.error
-      ? t('net.error', { e: t('net.err.' + st.error) === 'net.err.' + st.error ? st.error : t('net.err.' + st.error) })
-      : st.connected
-        ? (App.role === 'host' ? t('net.hostWaiting') : t('net.guestWaiting'))
-        : t('net.connecting');
-    $('lobby-status').className = 'lobby-status' + (st.error ? ' is-error' : st.connected ? ' is-ok' : '');
+    var share = $('room-share');
+    if (st.room && location.protocol !== 'file:') {
+      share.hidden = false;
+      $('room-link').textContent = roomLink(st.room);
+    } else {
+      share.hidden = true;
+    }
+    var line = lobbyStatus(st);
+    $('lobby-status').textContent = line.text;
+    $('lobby-status').className = 'lobby-status' + (line.cls ? ' ' + line.cls : '');
 
     var seats = st.seats.length ? st.seats : [];
     $('seat-list').innerHTML = seats.map(function (seat, index) {
@@ -468,6 +533,10 @@
     }).join('') || '<p class="empty-note">—</p>';
 
     var actions = [];
+    if (st.error === 'broker-unreachable' || st.error === 'room-not-found') {
+      actions.push('<button type="button" class="btn btn-primary" data-lobby="broker">' +
+        t('net.changeBroker') + '</button>');
+    }
     if (App.role === 'host') {
       if (seats.length < Net.MAX_SEATS) {
         actions.push('<button type="button" class="btn" data-lobby="bot">' + t('net.addBot') + '</button>');
@@ -486,8 +555,11 @@
     if (App.mode !== 'online' || !App.net) { chip.hidden = true; return; }
     var st = App.net.status();
     chip.hidden = false;
-    chip.className = 'net-chip ' + (st.connected ? 'is-on' : 'is-off');
-    chip.textContent = st.room + (st.connected ? '' : ' · ' + t('net.offline'));
+    var healthy = st.connected && !st.hostGone;
+    chip.className = 'net-chip ' + (healthy ? 'is-on' : 'is-off');
+    chip.textContent = st.room + (st.connected
+      ? (st.hostGone ? ' · ' + t('net.hostGoneShort') : '')
+      : ' · ' + t('net.offline'));
   }
 
   /* ---------------------------------------------------------- drawing */
@@ -723,7 +795,7 @@
     });
 
     $('resume-online-btn').addEventListener('click', function () {
-      var saved = load(ONLINE_KEY);
+      var saved = session(ONLINE_KEY);
       if (!saved || !saved.room) { showMenu(); return; }
       App.settings.broker = saved.brokerUrl || App.settings.broker;
       if (saved.role === 'host') hostRoom(saved);
@@ -763,10 +835,37 @@
     });
     $('online-back').addEventListener('click', function () { $('online-setup').hidden = true; });
 
+    /* A phone keyboard's Go key has to work. The submit event alone is not
+       enough: with several text fields and no submit button, browsers block
+       implicit submission outright and Enter does nothing at all. So handle the
+       key, and keep the submit handler for the case where one does fire. */
+    function submitOnline(event) {
+      if (event) event.preventDefault();
+      var raw = $('join-code').value.trim();
+      if (!raw) { $('join-code').focus(); return; }
+      var code = Net.normaliseCode(raw);
+      if (!Net.isValidCode(code)) { UI.toast(t('net.badCode'), 'error'); return; }
+      joinRoom(code);
+    }
+
+    $('online-setup').addEventListener('submit', submitOnline);
+    $('online-setup').addEventListener('keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      if (!event.target.closest('input')) return;
+      submitOnline(event);
+    });
+
     $('screen-lobby').addEventListener('click', function (event) {
       var kick = event.target.closest('[data-kick]');
       if (kick) { App.net.removeSeat(kick.dataset.kick); renderLobby(); return; }
-      if (event.target.closest('#copy-code')) { copyRoomCode(); return; }
+      if (event.target.closest('#copy-code')) {
+        copyText(App.net.room, t('net.copied', { code: App.net.room }));
+        return;
+      }
+      if (event.target.closest('#copy-link')) {
+        copyText(roomLink(App.net.room), t('net.copiedLink'));
+        return;
+      }
       var action = event.target.closest('[data-lobby]');
       if (!action || action.disabled) return;
       if (action.dataset.lobby === 'bot') {
@@ -776,6 +875,18 @@
         startOnlineGame();
       } else if (action.dataset.lobby === 'leave') {
         leaveOnline(null);
+      } else if (action.dataset.lobby === 'broker') {
+        // Back to the setup panel with the fields intact, not out to the menu.
+        if (App.net) App.net.leave();
+        App.net = null;
+        App.role = null;
+        App.seat = -1;
+        App.state = null;
+        session(ONLINE_KEY, null);
+        showMenu();
+        App.mode = 'online';
+        renderOnlineSetup();
+        $('broker-url').focus();
       }
     });
 
@@ -947,6 +1058,23 @@
     wireGame();
     wireModal();
     showMenu();
+
+    /* Opened from a shared link: fill the code in, and go straight in if we
+       already know what this player is called. */
+    var invited = roomFromUrl();
+    if (invited) {
+      var named = !!(App.settings.onlineName || '').trim();   // read before the panel fills it
+      App.mode = 'online';
+      renderOnlineSetup();
+      $('join-code').value = invited;
+      if (named) {
+        joinRoom(invited);
+      } else {
+        $('online-setup').scrollIntoView({ block: 'nearest' });
+        $('online-name').focus();
+        UI.toast(t('net.invited', { code: invited }));
+      }
+    }
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

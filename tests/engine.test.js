@@ -400,6 +400,29 @@ check('legalActions never offers an unaffordable purchase', function () {
   });
 });
 
+console.log('\nscreen switching');
+
+check('every screen change goes through the one helper', function () {
+  /* The lobby once stayed visible underneath a running game because enterGame
+     switched classes by hand and forgot it. A browser test caught that; this
+     one keeps the shortcut from coming back without needing a browser. */
+  var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
+  var adHoc = source.match(/classList\.(add|remove|toggle)\(\s*'is-active'/g) || [];
+  var inHelper = source.slice(source.indexOf('function showScreen'), source.indexOf('function showScreen') + 400)
+    .match(/classList\.toggle\(\s*'is-active'/g) || [];
+  eq(adHoc.length, inHelper.length,
+    'app.js toggles is-active outside showScreen(): ' + adHoc.join(', '));
+  assert(source.indexOf('function showScreen') > 0, 'showScreen must exist');
+});
+
+check('the markup has exactly one screen marked active to begin with', function () {
+  var html = require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
+  var screens = html.match(/class="screen[^"]*"/g) || [];
+  var active = screens.filter(function (cls) { return cls.indexOf('is-active') >= 0; });
+  assert(screens.length >= 3, 'expected menu, lobby and game screens, found ' + screens.length);
+  eq(active.length, 1, 'exactly one screen may start active, found: ' + active.join(', '));
+});
+
 console.log('\nMQTT wire format');
 
 check('remaining-length varints round-trip across every byte boundary', function () {

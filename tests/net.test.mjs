@@ -291,5 +291,71 @@ const until = (fn, ms = 6000) => new Promise((resolve, reject) => {
   await room.close();
 }
 
+{
+  console.log('\nWhen things go wrong\n');
+  const PORT = 9403;
+  const URL = 'ws://127.0.0.1:' + PORT;
+  const room = await startBroker(PORT);
+
+  /* A guest that names a room nobody is hosting must be told so, rather than
+     being left in a lobby claiming it is waiting for the host to start. */
+  const lost = Net.create({ clientId: 'lost-1', roomTimeout: 700 });
+  const seen = [];
+  lost.on('status', (st) => seen.push(st));
+  lost.join({ room: 'NOROOM', name: 'Lan', brokerUrl: URL });
+  await until(() => lost.connected);
+  check('connecting to a broker does not by itself mean being in a room',
+    lost.status().joined === false);
+  await until(() => lost.status().error === 'room-not-found', 4000);
+  check('a room nobody hosts is reported as not found', true);
+
+  /* And if a host turns up later, the error clears by itself. */
+  const late = Net.create({ clientId: 'late-host' });
+  late.host({ room: 'NOROOM', name: 'Hieu', brokerUrl: URL });
+  await until(() => late.connected);
+  await until(() => lost.status().joined === true && !lost.status().error, 5000);
+  check('when the host finally appears, the guest recovers on its own', true);
+
+  /* A broker that cannot be reached must not be reported as "connecting" for
+     ever: that is indistinguishable from a hung page. */
+  const nowhere = Net.create({ clientId: 'nowhere-1', connectTimeout: 600 });
+  nowhere.join({ room: 'ABC23', name: 'Nam', brokerUrl: 'ws://127.0.0.1:9499' });
+  await until(() => nowhere.status().error === 'broker-unreachable', 5000);
+  check('an unreachable broker is reported as unreachable',
+    nowhere.status().connected === false);
+  nowhere.leave();
+
+  /* The host's browser is the referee, so its disappearance has to reach the
+     other players. The broker does it for us with the host's last will. */
+  const host = Net.create({ clientId: 'host-2' });
+  host.host({ room: 'WILLX', name: 'Hieu', brokerUrl: URL });
+  await until(() => host.connected);
+  const guest = Net.create({ clientId: 'guest-2' });
+  let announced = 0;
+  guest.on('hostgone', () => announced++);
+  guest.join({ room: 'WILLX', name: 'Lan', brokerUrl: URL });
+  await until(() => guest.status().joined === true, 5000);
+  check('the guest is seated in the hosted room', guest.status().seats.length === 2);
+
+  const hostKey = Object.keys(room.broker.clients).find((k) => k.startsWith('host-2'));
+  room.broker.clients[hostKey].conn.destroy();
+  await until(() => announced > 0, 6000).catch(() => {});
+  check('a host that vanishes is announced to the guests', announced > 0,
+    'announcements: ' + announced);
+  check('the guest records that the host is gone', guest.status().hostGone === true);
+
+  /* A host who merely blipped comes back and publishes the room again, which
+     must clear the warning rather than leaving the game looking dead. */
+  const returning = Net.create({ clientId: 'host-2' });
+  returning.host({ room: 'WILLX', name: 'Hieu', brokerUrl: URL });
+  await until(() => returning.connected);
+  returning.publishRoom();
+  await until(() => guest.status().hostGone === false, 5000);
+  check('a host coming back clears the warning', !guest.status().error);
+
+  [lost, late, host, guest, returning].forEach((c) => c.leave());
+  await room.close();
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
 process.exit(fail ? 1 : 0);

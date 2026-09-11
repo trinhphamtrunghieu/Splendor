@@ -13,6 +13,12 @@ export async function startBroker(port) {
   await new Promise((resolve) => server.listen(port, resolve));
   return {
     broker,
-    close: () => new Promise((done) => { wss.close(); server.close(() => done()); })
+    /* aedes keeps its own heartbeat interval, so closing only the http and
+       websocket servers leaves the event loop alive and a finished test
+       hanging instead of exiting. */
+    close: () => new Promise((done) => {
+      wss.close();
+      server.close(() => broker.close(() => done()));
+    })
   };
 }
