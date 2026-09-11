@@ -156,10 +156,26 @@ which is what lets the whole thing be tested headlessly.
 
 ## Artwork, and using real images
 
-Out of the box every gem, card face and noble tile is **drawn**: `assets/js/art.js` holds one
-hidden SVG sprite with a faceted stone per gem colour, and the rest of the interface
-instantiates it with `<use>`. That keeps gradient ids from colliding and means a full board
-reuses one copy of each stone.
+What is installed right now:
+
+| Element | Art |
+| --- | --- |
+| Ten noble tiles | **Real paintings** — Clouet's Mary Stuart, Titian's Charles V, Santi di Tito's Machiavelli and so on, all public domain, all credited in `ATTRIBUTION.md` |
+| Gold token | **A photograph** of an 1881 gold ducat |
+| The five gem stones | **Drawn** — a round brilliant, a cushion, a step cut, an oval and a polished cabochon, in `assets/js/art.js` |
+| Card faces | The drawn stone, as a watermark behind the numbers |
+
+Gems are drawn rather than photographed because photographs of *cut stones* are hard to find
+automatically: a Commons search for "ruby gemstone" cheerfully returns scanned
+nineteenth-century books *about* gemstones, and Commons renders a PDF's cover page as a
+perfectly valid JPEG. The fetch script now looks in curated Commons categories, accepts only
+real bitmaps, and rejects titles and aspect ratios that smell like a scanned page — and it has
+a `--review` mode so you can see the candidates before anything is downloaded:
+
+```bash
+node tools/fetch-art.js --review --gems               # list candidates, download nothing
+node tools/fetch-art.js --gems --pick red="File:Ruby cabochon.jpg"
+```
 
 Photographs win over drawings wherever they are installed. To install them:
 
@@ -179,6 +195,12 @@ Prefer your own images? Drop them into `assets/img/{gems,cards,nobles}/` and lis
 `assets/img/manifest.js`; see `assets/img/README.md` for the filenames and recommended sizes.
 Anything you leave out keeps its drawing, so a partial set is fine, and photographs are only
 used where they have room to read — a 16px cost pip stays drawn either way.
+
+**Keep them small.** A noble tile is at most 104px wide and a gem token 52px, so a 600 KB
+source is bandwidth spent on pixels nobody sees. The installed portraits are 360px wide at
+around 30 KB each; the whole image set is under 400 KB, and a test fails if it grows past
+700 KB or if any single file goes over budget. The same test checks that every path the
+manifest lists exists and is credited.
 
 **Do not add the retail game's artwork.** Splendor's card illustrations, noble portraits and
 logo are copyrighted by Space Cowboys; this project ships none of them and the fetch script
@@ -334,8 +356,19 @@ token thì phải trả lại. Đủ chiết khấu theo yêu cầu thì quý t�
 
 ## Dùng ảnh thật
 
-Mặc định toàn bộ đá quý, mặt thẻ và ô quý tộc đều được **vẽ bằng vector** (`assets/js/art.js`).
-Nếu muốn ảnh thật:
+Hiện tại repo đã có ảnh thật: **10 tranh chân dung** quý tộc (Clouet, Titian, Santi di Tito…,
+đều public domain, ghi nguồn trong `ATTRIBUTION.md`) và **ảnh đồng ducat vàng 1881** cho token
+vàng. Năm viên đá còn lại vẫn là hình vector — vì tìm ảnh đá quý đã cắt bằng máy rất dễ sai:
+Commons search cho "ruby gemstone" trả về cả sách cổ *viết về* đá quý, và Commons render trang
+bìa PDF thành ảnh JPEG hợp lệ. Script đã được sửa (tìm theo category, chỉ nhận ảnh bitmap thật,
+loại tên và tỉ lệ giống trang sách) và có thêm chế độ xem trước:
+
+```bash
+node tools/fetch-art.js --review --gems       # chỉ liệt kê ứng viên, không tải
+node tools/fetch-art.js --gems --pick red="File:Ruby cabochon.jpg"
+```
+
+Nếu muốn thay ảnh khác:
 
 ```bash
 node tools/fetch-art.js --dry-run   # xem trước sẽ tải những gì

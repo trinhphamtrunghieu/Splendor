@@ -51,16 +51,25 @@ const NOBLES = {
   n10: { name: 'Henry VIII', titles: ['Henry VIII'] }
 };
 
-/* Commons searches for each gem. Refined to cut stones rather than jewellery,
-   which photographs badly at token size. */
-const GEM_QUERIES = {
-  white: 'diamond cut gemstone loose stone',
-  blue: 'sapphire cut gemstone loose stone',
-  green: 'emerald cut gemstone loose stone',
-  red: 'ruby cut gemstone loose stone',
-  black: 'onyx polished gemstone cabochon',
-  gold: 'gold coin ducat obverse'
+/* Where to look for each gem. Free-text search was a mistake here: a search for
+   "ruby gemstone" happily returns scanned nineteenth-century books *about*
+   gemstones, whose cover pages Commons renders as perfectly valid JPEGs. These
+   categories are curated by Commons editors and contain photographs of the
+   actual stones; the search terms are only a fallback. */
+const GEM_SOURCES = {
+  white: { categories: ['Diamonds', 'Cut diamonds'], search: 'cut diamond gemstone photograph' },
+  blue: { categories: ['Sapphires', 'Cut sapphires'], search: 'cut sapphire gemstone photograph' },
+  green: { categories: ['Emeralds', 'Cut emeralds'], search: 'cut emerald gemstone photograph' },
+  red: { categories: ['Rubies', 'Cut rubies'], search: 'cut ruby gemstone photograph' },
+  black: { categories: ['Onyx', 'Black gemstones'], search: 'onyx polished gemstone photograph' },
+  gold: { categories: ['Gold coins', 'Ducats'], search: 'gold ducat coin obverse' }
 };
+
+/* Kept for the tests and for anyone reading the old option name. */
+const GEM_QUERIES = Object.keys(GEM_SOURCES).reduce((out, key) => {
+  out[key] = GEM_SOURCES[key].search;
+  return out;
+}, {});
 
 /* ------------------------------------------------------------- helpers */
 
@@ -75,6 +84,31 @@ function isFreeLicense(shortName) {
   if (/fair use|non-free|nonfree|all rights reserved|copyright/.test(s)) return false;
   if (/\bnc\b|non-commercial|noncommercial|\bnd\b|no-?deriv/.test(s)) return false;
   return /public domain|^pd|\bpd\b|cc0|cc[- ]?by|gfdl|free art|copyleft/.test(s);
+}
+
+/* Commons renders the first page of a PDF or DjVu as a thumbnail, so a naive
+   "not an svg" check lets book scans through — which is exactly how five book
+   covers ended up being used as gemstones. Whitelist real bitmaps instead. */
+const BITMAP_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+function isBitmap(mime) {
+  return BITMAP_TYPES.indexOf(String(mime || '').toLowerCase()) >= 0;
+}
+
+/* Titles that betray a scanned page, a diagram or a chart rather than a photo
+   of the thing itself. */
+const NOT_A_PHOTO = /\.(pdf|djvu|tif|tiff|svg)$|\b(book|cover|page|plate|folio|scan|frontispiece|title|catalogue|schedule|vocabulary|treatise|map|chart|diagram|drawing|engraving|illustration|logo|icon|stamp|banknote|graph)\b/i;
+
+function looksLikeAPhotograph(file) {
+  if (!isBitmap(file.mime)) return false;
+  if (NOT_A_PHOTO.test(file.title || '')) return false;
+  /* A gem photograph is roughly square; a book page is tall and narrow. */
+  if (file.width && file.height) {
+    const ratio = file.width / file.height;
+    if (ratio < 0.55 || ratio > 1.9) return false;
+    if (Math.min(file.width, file.height) < 200) return false;
+  }
+  return true;
 }
 
 function stripHtml(value) {
@@ -223,7 +257,40 @@ async function fileCredit(fileTitle) {
   };
 }
 
-/* Free-licensed Commons files matching a search, widest thumbnail first. */
+function describeFiles(pages, width) {
+  return (pages || []).map((page) => {
+    const info = (page.imageinfo && page.imageinfo[0]) || {};
+    const meta = info.extmetadata || {};
+    const pick = (key) => (meta[key] && meta[key].value) || '';
+    return {
+      title: page.title,
+      url: info.thumburl || info.url,
+      mime: info.mime || '',
+      width: info.width || 0,
+      height: info.height || 0,
+      license: stripHtml(pick('LicenseShortName')) || 'unknown',
+      author: stripHtml(pick('Artist')) || stripHtml(pick('Credit')),
+      descriptionUrl: info.descriptionurl || ''
+    };
+  }).filter((f) => f.url);
+}
+
+/* Files in a curated Commons category. */
+async function categoryFiles(category, width, limit) {
+  const data = await api(COMMONS, {
+    action: 'query',
+    generator: 'categorymembers',
+    gcmtitle: 'Category:' + category,
+    gcmtype: 'file',
+    gcmlimit: limit || 30,
+    prop: 'imageinfo',
+    iiprop: 'extmetadata|url|size',
+    iiurlwidth: width
+  });
+  return describeFiles(data.query && data.query.pages, width);
+}
+
+/* Free-licensed Commons files matching a search. */
 async function searchFiles(query, width, limit) {
   const data = await api(COMMONS, {
     action: 'query',
@@ -232,23 +299,34 @@ async function searchFiles(query, width, limit) {
     gsrsearch: query,
     gsrlimit: limit || 12,
     prop: 'imageinfo',
-    iiprop: 'extmetadata|url',
+    iiprop: 'extmetadata|url|size',
     iiurlwidth: width
   });
-  const pages = (data.query && data.query.pages) || [];
-  return pages.map((page) => {
-    const info = (page.imageinfo && page.imageinfo[0]) || {};
-    const meta = info.extmetadata || {};
-    const pick = (key) => (meta[key] && meta[key].value) || '';
-    return {
-      title: page.title,
-      url: info.thumburl || info.url,
-      mime: info.mime || '',
-      license: stripHtml(pick('LicenseShortName')) || 'unknown',
-      author: stripHtml(pick('Artist')) || stripHtml(pick('Credit')),
-      descriptionUrl: info.descriptionurl || ''
-    };
-  }).filter((f) => f.url && !/svg/i.test(f.mime));
+  return describeFiles(data.query && data.query.pages, width);
+}
+
+/* Candidates for one gem, best first: curated categories, then search, with
+   anything that is not a photograph of a stone filtered out. */
+async function gemCandidates(color, width) {
+  const source = GEM_SOURCES[color];
+  const seen = {};
+  const out = [];
+  const consider = (files) => {
+    files.forEach((file) => {
+      if (seen[file.title]) return;
+      seen[file.title] = true;
+      if (!looksLikeAPhotograph(file)) return;
+      if (!isFreeLicense(file.license)) return;
+      out.push(file);
+    });
+  };
+  for (const category of source.categories) {
+    try { consider(await categoryFiles(category, width, 40)); } catch (err) { /* try the next */ }
+  }
+  if (out.length < 3) {
+    try { consider(await searchFiles(source.search, width, 20)); } catch (err) { /* nothing else to try */ }
+  }
+  return out;
 }
 
 async function download(url, destination, retries = 3) {
@@ -286,24 +364,41 @@ async function download(url, destination, retries = 3) {
 /* ------------------------------------------------------------------ main */
 
 function parseArgs(argv) {
-  const flags = new Set(argv.filter((a) => a.startsWith('--')));
+  const flags = new Set(argv.filter((a) => a.startsWith('--') && a.indexOf('=') < 0));
   const wantNobles = flags.has('--nobles') || !(flags.has('--gems'));
   const wantGems = flags.has('--gems') || !(flags.has('--nobles'));
+
+  /* --pick red=File:Some ruby.jpg  forces one choice */
+  const picks = {};
+  argv.forEach((arg, i) => {
+    const inline = /^--pick=(.+)$/.exec(arg);
+    const value = inline ? inline[1] : (arg === '--pick' ? argv[i + 1] : null);
+    if (!value) return;
+    const split = value.indexOf('=');
+    if (split > 0) picks[value.slice(0, split)] = value.slice(split + 1);
+  });
+
   return {
     nobles: wantNobles,
     gems: wantGems,
     dryRun: flags.has('--dry-run'),
+    review: flags.has('--review'),
+    picks: picks,
     help: flags.has('--help') || flags.has('-h')
   };
 }
 
 const HELP = `Splendor art fetcher
 
-  node tools/fetch-art.js [--nobles] [--gems] [--dry-run]
+  node tools/fetch-art.js [--nobles] [--gems] [--dry-run] [--review]
 
   --nobles    public-domain portraits for the ten noble tiles
   --gems      photographs of cut stones for the six gem tokens
   --dry-run   report what would be downloaded, write nothing
+  --review    list the candidate files per gem and pick nothing, so you can
+              eyeball them first (gem search is fuzzy by nature)
+  --pick c=F  force one gem to a file you chose from --review, e.g.
+              --pick red="File:Ruby cabochon.jpg"
   --help      this text
 
 Only public-domain and free-licence (CC0/CC BY/CC BY-SA/GFDL) files are
@@ -366,16 +461,26 @@ async function main() {
 
   if (opts.gems) {
     console.log('\nGem photographs (free-licence Commons files)\n');
-    for (const color of Object.keys(GEM_QUERIES)) {
+    for (const color of Object.keys(GEM_SOURCES)) {
       try {
-        const found = await searchFiles(GEM_QUERIES[color], 512, 14);
-        const usable = found.filter((f) => isFreeLicense(f.license));
+        const usable = await gemCandidates(color, 512);
+        if (opts.review) {
+          console.log(`  ${color}: ${usable.length} candidate(s)`);
+          usable.slice(0, 6).forEach((f, i) => {
+            console.log(`     ${i === 0 ? '*' : ' '} ${f.title}  [${f.license}] ${f.width}x${f.height}`);
+          });
+          if (!usable.length) failures++;
+          continue;
+        }
         if (!usable.length) {
-          console.log(`  !! ${color}: nothing free-licensed among ${found.length} results`);
+          console.log(`  !! ${color}: no usable photograph found`);
           failures++;
           continue;
         }
-        const pick = usable[0];
+        const forced = opts.picks[color];
+        const pick = forced
+          ? (usable.filter((f) => f.title === forced || f.title === 'File:' + forced)[0] || usable[0])
+          : usable[0];
         const rel = `assets/img/gems/${color}.${extFromUrl(pick.url)}`;
         if (opts.dryRun) {
           console.log(`  ok ${color} -> ${rel} [${pick.license}] ${pick.title}`);
@@ -426,6 +531,7 @@ if (require.main === module) {
 }
 
 module.exports = {
-  NOBLES, GEM_QUERIES,
-  isFreeLicense, stripHtml, extFromUrl, renderManifest, renderAttribution, parseArgs
+  NOBLES, GEM_QUERIES, GEM_SOURCES,
+  isFreeLicense, isBitmap, looksLikeAPhotograph, NOT_A_PHOTO,
+  stripHtml, extFromUrl, renderManifest, renderAttribution, parseArgs
 };

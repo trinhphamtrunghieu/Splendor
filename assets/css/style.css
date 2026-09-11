@@ -460,7 +460,9 @@ h1, h2, h3, p { margin: 0; }
 }
 .noble-portrait img {
   width: 100%; height: 100%;
-  object-fit: cover; object-position: center 22%;
+  /* Painted portraits put the head high in the frame; a few are full-length,
+     so bias the crop well towards the top or their faces vanish. */
+  object-fit: cover; object-position: center 15%;
   display: block;
   filter: sepia(.14) contrast(1.04) saturate(.95);
 }

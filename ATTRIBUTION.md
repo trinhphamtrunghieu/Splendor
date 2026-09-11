@@ -7,6 +7,11 @@ reported by the Wikimedia Commons API when `tools/fetch-art.js` downloaded it.
 Re-running the script rewrites this file. If you replace an image by hand, please
 add its credit here too.
 
+The ten noble portraits are paintings from the 1500s, photographed by the museums
+that hold them; the gold token is a photograph of an 1881 ducat. The other five
+gem tokens are drawn vector artwork from `assets/js/art.js`, not photographs —
+see the note in `assets/img/manifest.js`.
+
 | File | Depicts | Source | Author | Licence |
 | --- | --- | --- | --- | --- |
 | `assets/img/nobles/n1.jpg` | Mary Stuart | [File:François_Clouet_-_Mary,_Queen_of_Scots_(1542-87)_-_Google_Art_Project.jpg](https://commons.wikimedia.org/wiki/File:Fran%C3%A7ois_Clouet_-_Mary,_Queen_of_Scots_(1542-87)_-_Google_Art_Project.jpg) | François Clouet | Public domain |
@@ -19,11 +24,6 @@ add its credit here too.
 | `assets/img/nobles/n8.jpg` | Elisabeth of Austria | [File:Elisabeth_of_Austria_Queen_of_France_by_Jooris_van_der_Straaten_-_1570s_.jpg](https://commons.wikimedia.org/wiki/File:Elisabeth_of_Austria_Queen_of_France_by_Jooris_van_der_Straaten_-_1570s_.jpg) | Jooris van der Straeten | Public domain |
 | `assets/img/nobles/n9.jpg` | Francis I of France | [File:François_Ier_Louvre.jpg](https://commons.wikimedia.org/wiki/File:Fran%C3%A7ois_Ier_Louvre.jpg) | Jean Clouet | Public domain |
 | `assets/img/nobles/n10.jpg` | Henry VIII | [File:After_Hans_Holbein_the_Younger_-_Portrait_of_Henry_VIII_-_Google_Art_Project.jpg](https://commons.wikimedia.org/wiki/File:After_Hans_Holbein_the_Younger_-_Portrait_of_Henry_VIII_-_Google_Art_Project.jpg) | Workshop of Hans Holbein the Younger | Public domain |
-| `assets/img/gems/white.jpg` | white gem | [File:Schedule of gem-stones .. (IA scheduleofgemsto00glas).pdf](https://commons.wikimedia.org/wiki/File:Schedule_of_gem-stones_.._(IA_scheduleofgemsto00glas).pdf) | Glaser, George F. [from old catalog] | Public domain |
-| `assets/img/gems/blue.jpg` | blue gem | [File:Schedule of gem-stones .. (IA scheduleofgemsto00glas).pdf](https://commons.wikimedia.org/wiki/File:Schedule_of_gem-stones_.._(IA_scheduleofgemsto00glas).pdf) | Glaser, George F. [from old catalog] | Public domain |
-| `assets/img/gems/green.jpg` | green gem | [File:Schedule of gem-stones .. (IA scheduleofgemsto00glas).pdf](https://commons.wikimedia.org/wiki/File:Schedule_of_gem-stones_.._(IA_scheduleofgemsto00glas).pdf) | Glaser, George F. [from old catalog] | Public domain |
-| `assets/img/gems/red.jpg` | red gem | [File:Architecture of the focus 3D telemodeling tool (IA architectureoffo7322grei).pdf](https://commons.wikimedia.org/wiki/File:Architecture_of_the_focus_3D_telemodeling_tool_(IA_architectureoffo7322grei).pdf) | Greisser, Arthur F. | Public domain |
-| `assets/img/gems/black.jpg` | black gem | [File:The cabinet of gems ; or, vocabulary of precious stones, coloured and arranged according to their comparative value - together with a description of the largest known diamonds and coloured gems (IA TheCabinetOfGems).pdf](https://commons.wikimedia.org/wiki/File:The_cabinet_of_gems_;_or,_vocabulary_of_precious_stones,_coloured_and_arranged_according_to_their_comparative_value_-_together_with_a_description_of_the_largest_known_diamonds_and_coloured_gems_(IA_TheCabinetOfGems).pdf) | Batchelor, S. | Public domain |
 | `assets/img/gems/gold.jpg` | gold gem | [File:1 dukát 1881 obverse.jpg](https://commons.wikimedia.org/wiki/File:1_duk%C3%A1t_1881_obverse.jpg) | Timur lenk | Public domain |
 
 ## Not included

@@ -604,13 +604,53 @@ check('the generated manifest is valid javascript with the right shape', functio
   eq(fake.SplendorImages.version, 1);
 });
 
-check('the committed manifest is empty, so the repository ships drawings only', function () {
-  var code = require('fs').readFileSync(__dirname + '/../assets/img/manifest.js', 'utf8');
-  var fake = {};
-  new Function('window', code)(fake);
+check('every image the manifest claims is installed really is', function () {
+  var fs = require('fs');
+  var path = require('path');
+  var root = path.join(__dirname, '..');
+  var manifest = {};
+  new Function('window', fs.readFileSync(path.join(root, 'assets/img/manifest.js'), 'utf8'))(manifest);
+  var images = manifest.SplendorImages;
+
+  var validKeys = {
+    gems: D.ALL_TOKENS,
+    cards: D.ALL_TOKENS,
+    nobles: D.NOBLES.map(function (n) { return n.id; })
+  };
+  var credits = fs.readFileSync(path.join(root, 'ATTRIBUTION.md'), 'utf8');
+
   ['gems', 'cards', 'nobles'].forEach(function (group) {
-    eq(Object.keys(fake.SplendorImages[group]).length, 0, group + ' should be empty');
+    Object.keys(images[group]).forEach(function (key) {
+      assert(validKeys[group].indexOf(key) >= 0, group + '.' + key + ' is not a real ' + group + ' key');
+      var rel = images[group][key];
+      assert(fs.existsSync(path.join(root, rel)), 'manifest points at a missing file: ' + rel);
+      assert(fs.statSync(path.join(root, rel)).size > 0, rel + ' is empty');
+      assert(credits.indexOf(rel) >= 0, rel + ' is installed but not credited in ATTRIBUTION.md');
+    });
   });
+});
+
+check('installed images are small enough to serve from a static page', function () {
+  var fs = require('fs');
+  var path = require('path');
+  var root = path.join(__dirname, '..');
+  var manifest = {};
+  new Function('window', fs.readFileSync(path.join(root, 'assets/img/manifest.js'), 'utf8'))(manifest);
+  var images = manifest.SplendorImages;
+  var total = 0;
+
+  // A noble tile is 104px wide, a gem token 52px: a file far beyond that is
+  // bandwidth spent on pixels nobody sees, which matters most on a phone.
+  var caps = { gems: 60, cards: 120, nobles: 120 };
+  ['gems', 'cards', 'nobles'].forEach(function (group) {
+    Object.keys(images[group]).forEach(function (key) {
+      var kb = fs.statSync(path.join(root, images[group][key])).size / 1024;
+      total += kb;
+      assert(kb <= caps[group], images[group][key] + ' is ' + Math.round(kb) +
+        ' KB, over the ' + caps[group] + ' KB budget for ' + group);
+    });
+  });
+  assert(total <= 700, 'the installed images total ' + Math.round(total) + ' KB');
 });
 
 check('attribution keeps the credits and the do-not-add warning', function () {
@@ -621,6 +661,70 @@ check('attribution keeps the credits and the do-not-add warning', function () {
   assert(md.indexOf('assets/img/nobles/n1.jpg') > 0, 'lists the file');
   assert(md.indexOf('Public domain') > 0, 'records the licence');
   assert(md.indexOf('Space Cowboys') > 0, 'keeps the warning about the retail art');
+});
+
+check('a rendered book page is not mistaken for a gemstone', function () {
+  /* These are the actual files the first version of the script downloaded and
+     used as gems. A PDF's first page comes back from Commons as a valid JPEG
+     thumbnail, so "not an svg" was not nearly enough of a check. */
+  var realMistakes = [
+    { title: 'File:Schedule of gem-stones .. (IA scheduleofgemsto00glas).pdf', mime: 'application/pdf', width: 500, height: 710 },
+    { title: 'File:The cabinet of gems ; or, vocabulary of precious stones.pdf', mime: 'application/pdf', width: 500, height: 762 },
+    { title: 'File:Architecture of the focus 3D telemodeling tool (IA architectureoffo7322grei).pdf', mime: 'application/pdf', width: 960, height: 1235 }
+  ];
+  realMistakes.forEach(function (file) {
+    assert(!fetchArt.looksLikeAPhotograph(file), 'should have been refused: ' + file.title);
+  });
+
+  /* Same pages, but claiming to be jpegs: the title and shape still give them away. */
+  assert(!fetchArt.looksLikeAPhotograph(
+    { title: 'File:Gem book cover page.jpg', mime: 'image/jpeg', width: 500, height: 710 }),
+    'a title that says "book cover page" is not a gem');
+  assert(!fetchArt.looksLikeAPhotograph(
+    { title: 'File:Ruby.jpg', mime: 'image/jpeg', width: 400, height: 1400 }),
+    'a stone photograph is not four times taller than it is wide');
+  assert(!fetchArt.looksLikeAPhotograph(
+    { title: 'File:Ruby.jpg', mime: 'image/jpeg', width: 90, height: 90 }),
+    'a thumbnail-sized source is too small to use');
+  assert(!fetchArt.looksLikeAPhotograph(
+    { title: 'File:Diamond diagram.svg', mime: 'image/svg+xml', width: 500, height: 500 }),
+    'vector diagrams are not photographs');
+
+  /* And the real gem photographs must still pass. */
+  [
+    { title: 'File:1 dukát 1881 obverse.jpg', mime: 'image/jpeg', width: 394, height: 390 },
+    { title: 'File:Ruby cabochon 2.jpg', mime: 'image/jpeg', width: 800, height: 600 },
+    { title: 'File:Emerald rough cut.png', mime: 'image/png', width: 1024, height: 768 }
+  ].forEach(function (file) {
+    assert(fetchArt.looksLikeAPhotograph(file), 'should have been accepted: ' + file.title);
+  });
+});
+
+check('only real bitmaps are downloadable', function () {
+  ['image/jpeg', 'image/png', 'image/webp'].forEach(function (mime) {
+    assert(fetchArt.isBitmap(mime), mime + ' should be allowed');
+  });
+  ['application/pdf', 'image/svg+xml', 'image/vnd.djvu', 'image/tiff', '', null].forEach(function (mime) {
+    assert(!fetchArt.isBitmap(mime), String(mime) + ' must not be allowed');
+  });
+});
+
+check('each gem is looked for in curated categories, not just free text', function () {
+  eq(Object.keys(fetchArt.GEM_SOURCES).sort(), D.ALL_TOKENS.slice().sort());
+  Object.keys(fetchArt.GEM_SOURCES).forEach(function (color) {
+    var source = fetchArt.GEM_SOURCES[color];
+    assert(source.categories && source.categories.length >= 1, color + ' needs a Commons category');
+    assert(source.search, color + ' needs a fallback search');
+  });
+});
+
+check('a forced pick can be passed on the command line', function () {
+  var opts = fetchArt.parseArgs(['--gems', '--pick', 'red=File:Ruby cabochon.jpg']);
+  eq(opts.picks.red, 'File:Ruby cabochon.jpg');
+  eq(opts.gems, true);
+  eq(opts.nobles, false);
+  eq(fetchArt.parseArgs(['--review']).review, true);
+  eq(fetchArt.parseArgs(['--pick=blue=File:Sapphire.jpg']).picks.blue, 'File:Sapphire.jpg');
 });
 
 check('the fetch list matches the game data exactly', function () {
@@ -636,10 +740,13 @@ check('the fetch list matches the game data exactly', function () {
 });
 
 check('argument parsing defaults to fetching both groups', function () {
-  eq(fetchArt.parseArgs([]), { nobles: true, gems: true, dryRun: false, help: false });
-  eq(fetchArt.parseArgs(['--nobles']), { nobles: true, gems: false, dryRun: false, help: false });
-  eq(fetchArt.parseArgs(['--gems']), { nobles: false, gems: true, dryRun: false, help: false });
+  var base = { nobles: true, gems: true, dryRun: false, review: false, picks: {}, help: false };
+  eq(fetchArt.parseArgs([]), base);
+  eq(fetchArt.parseArgs(['--nobles']).gems, false);
+  eq(fetchArt.parseArgs(['--nobles']).nobles, true);
+  eq(fetchArt.parseArgs(['--gems']).nobles, false);
   eq(fetchArt.parseArgs(['--dry-run']).dryRun, true);
+  eq(fetchArt.parseArgs(['--help']).help, true);
 });
 
 console.log('\ntutorial walkthrough');

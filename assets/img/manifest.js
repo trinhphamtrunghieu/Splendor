@@ -6,11 +6,10 @@
 window.SplendorImages = {
   version: 1,
   gems: {
-    white: 'assets/img/gems/white.jpg',
-    blue: 'assets/img/gems/blue.jpg',
-    green: 'assets/img/gems/green.jpg',
-    red: 'assets/img/gems/red.jpg',
-    black: 'assets/img/gems/black.jpg',
+    /* Only gold has a real photograph that is actually a photograph of gold:
+       the Commons search behind the other five returned scanned book covers,
+       so those keep the drawn cut stones. Re-run
+       `node tools/fetch-art.js --review --gems` to pick real ones. */
     gold: 'assets/img/gems/gold.jpg'
   },
   cards: {},
