@@ -7,11 +7,14 @@ require('../assets/js/data.js');
 require('../assets/js/engine.js');
 require('../assets/js/ai.js');
 require('../assets/js/tutorial.js');
+require('../assets/js/art.js');
+var fetchArt = require('../tools/fetch-art.js');
 
 var D = window.SplendorData;
 var E = window.SplendorEngine;
 var AI = window.SplendorAI;
 var Tut = window.SplendorTutorial;
+var Art = window.SplendorArt;
 
 var passed = 0;
 var failed = 0;
@@ -391,6 +394,118 @@ check('legalActions never offers an unaffordable purchase', function () {
   E.legalActions(state).forEach(function (action) {
     if (action.type === 'buy') assert(E.canAfford(state.players[0], action.card), 'offered ' + action.cardId);
   });
+});
+
+console.log('\nartwork');
+
+check('every gem colour has a drawn stone in the sprite', function () {
+  var sprite = require('fs').readFileSync(__dirname + '/../assets/js/art.js', 'utf8');
+  D.ALL_TOKENS.forEach(function (color) {
+    assert(sprite.indexOf('id="spg-' + color + '"') > 0, 'no symbol for ' + color);
+    var markup = Art.gemIcon(color, 'gem-ico');
+    assert(markup.indexOf('#spg-' + color) > 0, 'icon does not reference the symbol: ' + color);
+    assert(markup.indexOf('<svg') === 0, 'icon should be inline svg');
+  });
+});
+
+check('small gems stay drawn even when photographs are installed', function () {
+  window.SplendorImages = { gems: { red: 'assets/img/gems/red.jpg' }, cards: {}, nobles: {} };
+  try {
+    assert(Art.gemIcon('red').indexOf('<svg') === 0, 'icons must not switch to photos');
+    assert(Art.gem('red').indexOf('<img') === 0, 'token-size gems should use the photo');
+    assert(Art.gem('blue').indexOf('<svg') === 0, 'a gem with no photo falls back to the drawing');
+    assert(Art.cardArt('red').indexOf('card-photo') > 0, 'card art uses the photo when present');
+    assert(Art.cardArt('blue').indexOf('card-art') > 0, 'card art falls back to the drawing');
+    assert(Art.hasPhotos(), 'hasPhotos should see the installed file');
+  } finally {
+    window.SplendorImages = { gems: {}, cards: {}, nobles: {} };
+  }
+});
+
+check('an empty manifest means everything is drawn', function () {
+  assert(!Art.hasPhotos());
+  assert(Art.nobleImage('n1') === null, 'no portrait installed');
+  D.ALL_TOKENS.forEach(function (color) {
+    assert(Art.gem(color).indexOf('<svg') === 0, color + ' should be drawn');
+  });
+});
+
+console.log('\nimage fetch tool');
+
+check('only redistributable licences are accepted', function () {
+  ['Public domain', 'PD-old-100', 'CC0', 'CC BY 4.0', 'CC BY-SA 3.0', 'GFDL',
+   'cc by-sa 4.0', 'Public Domain Mark'].forEach(function (ok) {
+    assert(fetchArt.isFreeLicense(ok), 'should accept: ' + ok);
+  });
+  ['Fair use', 'All rights reserved', 'CC BY-NC 4.0', 'CC BY-ND 4.0',
+   'CC BY-NC-SA 3.0', 'Non-free', '', null, undefined, 'Copyrighted free use?'].forEach(function (bad) {
+    assert(!fetchArt.isFreeLicense(bad), 'should refuse: ' + bad);
+  });
+});
+
+check('credit text is stripped of the API markup', function () {
+  eq(fetchArt.stripHtml('<a href="/wiki/x" title="y">Hans  Holbein</a>'), 'Hans Holbein');
+  eq(fetchArt.stripHtml('Jan &amp; Hubert &quot;van Eyck&quot;'), 'Jan & Hubert "van Eyck"');
+  eq(fetchArt.stripHtml(null), '');
+});
+
+check('file extensions come from the download url', function () {
+  eq(fetchArt.extFromUrl('https://x/y/Portrait.JPEG'), 'jpg');
+  eq(fetchArt.extFromUrl('https://x/y/a.png?width=500'), 'png');
+  eq(fetchArt.extFromUrl('https://x/y/a.webp'), 'webp');
+  eq(fetchArt.extFromUrl('https://x/y/no-extension'), 'jpg');
+});
+
+check('the generated manifest is valid javascript with the right shape', function () {
+  var code = fetchArt.renderManifest({
+    gems: { white: 'assets/img/gems/white.jpg' },
+    cards: {},
+    nobles: { n1: 'assets/img/nobles/n1.jpg' }
+  });
+  var fake = {};
+  new Function('window', code)(fake);
+  eq(fake.SplendorImages.gems, { white: 'assets/img/gems/white.jpg' });
+  eq(fake.SplendorImages.cards, {});
+  eq(fake.SplendorImages.nobles, { n1: 'assets/img/nobles/n1.jpg' });
+  eq(fake.SplendorImages.version, 1);
+});
+
+check('the committed manifest is empty, so the repository ships drawings only', function () {
+  var code = require('fs').readFileSync(__dirname + '/../assets/img/manifest.js', 'utf8');
+  var fake = {};
+  new Function('window', code)(fake);
+  ['gems', 'cards', 'nobles'].forEach(function (group) {
+    eq(Object.keys(fake.SplendorImages[group]).length, 0, group + ' should be empty');
+  });
+});
+
+check('attribution keeps the credits and the do-not-add warning', function () {
+  var md = fetchArt.renderAttribution([
+    { file: 'assets/img/nobles/n1.jpg', subject: 'Mary Stuart', sourceLabel: 'File:Mary.jpg',
+      sourceUrl: 'https://commons.wikimedia.org/wiki/File:Mary.jpg', author: 'Anon', license: 'Public domain' }
+  ]);
+  assert(md.indexOf('assets/img/nobles/n1.jpg') > 0, 'lists the file');
+  assert(md.indexOf('Public domain') > 0, 'records the licence');
+  assert(md.indexOf('Space Cowboys') > 0, 'keeps the warning about the retail art');
+});
+
+check('the fetch list matches the game data exactly', function () {
+  eq(Object.keys(fetchArt.NOBLES).sort(), D.NOBLES.map(function (n) { return n.id; }).sort(),
+    'a noble without a portrait source, or a source for a noble that does not exist');
+  eq(Object.keys(fetchArt.GEM_QUERIES).sort(), D.ALL_TOKENS.slice().sort(),
+    'every token colour needs a photo query');
+  Object.keys(fetchArt.NOBLES).forEach(function (id) {
+    var entry = fetchArt.NOBLES[id];
+    assert(entry.titles && entry.titles.length, id + ' has no candidate article');
+    assert(D.NOBLE_NAMES[id], id + ' is missing from NOBLE_NAMES');
+  });
+});
+
+check('argument parsing defaults to fetching both groups', function () {
+  eq(fetchArt.parseArgs([]), { nobles: true, gems: true, dryRun: false, help: false });
+  eq(fetchArt.parseArgs(['--nobles']), { nobles: true, gems: false, dryRun: false, help: false });
+  eq(fetchArt.parseArgs(['--gems']), { nobles: false, gems: true, dryRun: false, help: false });
+  eq(fetchArt.parseArgs(['--dry-run']).dryRun, true);
 });
 
 console.log('\ntutorial walkthrough');

@@ -566,6 +566,7 @@
   /* ------------------------------------------------------------- boot */
 
   function init() {
+    global.SplendorArt.inject();          // gem artwork must exist before any render
     var saved = load(SETTINGS_KEY);
     if (saved) {
       Object.keys(App.settings).forEach(function (key) {

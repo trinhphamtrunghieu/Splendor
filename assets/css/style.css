@@ -374,8 +374,55 @@ h1, h2, h3, p { margin: 0; }
 }
 .noble.is-ready { outline: 2px solid var(--ok); outline-offset: 1px; }
 .noble-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.noble-crest {
+  width: 20px; height: 20px; border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: .7rem; font-weight: 850; color: #5d4a20;
+  background: radial-gradient(circle at 35% 30%, #fdf6e2, #c3ab77);
+  border: 1px solid #8b7549;
+  flex: 0 0 auto;
+}
+
+/* A real portrait: framed, cropped to the face, name burned into the bottom. */
+.noble-portrait {
+  position: relative;
+  height: 74px;
+  border-radius: 5px;
+  overflow: hidden;
+  border: 1px solid #8b7549;
+  background: #2a2113;
+}
+.noble-portrait img {
+  width: 100%; height: 100%;
+  object-fit: cover; object-position: center 22%;
+  display: block;
+  filter: sepia(.14) contrast(1.04) saturate(.95);
+}
+.noble-portrait .noble-pts {
+  position: absolute; left: 3px; top: 2px;
+  font-size: 1rem; color: #fff;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .95), 0 0 8px rgba(0, 0, 0, .7);
+}
+.noble-caption {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  padding: 10px 4px 2px;
+  font-size: .5rem; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  color: #fff; text-align: center; line-height: 1.1;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .82));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+@media (min-width: 1000px) { .noble-portrait { height: 84px; } }
 .noble-pts { font-weight: 850; font-size: 1.15rem; line-height: 1; }
-.noble-name { font-size: .54rem; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; opacity: .72; text-align: right; line-height: 1.15; }
+.noble-name {
+  font-size: .52rem; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+  opacity: .72; text-align: right; line-height: 1.12;
+  min-width: 0;                              /* never spill past the tile edge */
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+  overflow: hidden;                          /* two lines, then clip cleanly */
+}
+/* The monogram stands in for the name on phones, where the name is hidden;
+   above that the name has the room and the crest would only crowd it. */
+@media (min-width: 701px) { .noble-crest { display: none; } }
 .noble-req { display: flex; gap: 4px; flex-wrap: wrap; }
 
 /* ───────────────────────────── tiers & cards ───────────────────────────── */
@@ -438,6 +485,34 @@ h1, h2, h3, p { margin: 0; }
 .card--red   { background: linear-gradient(165deg, #ef5f5f 0%, #8c2026 100%); color: #fff; }
 .card--black { background: linear-gradient(165deg, #5a5a6b 0%, #1c1c24 100%); color: #fff; }
 
+/* Card artwork sits behind the numbers: a photograph when one is installed,
+   otherwise the cut stone as a watermark. */
+.card-art {
+  position: absolute; right: -8%; bottom: -5%;
+  width: 70%; pointer-events: none;
+  opacity: .24;
+}
+.card-art svg { display: block; width: 100%; height: auto; }
+.card--white .card-art { opacity: .42; }
+.card--black .card-art { opacity: .4; }
+
+.card-photo {
+  position: absolute; inset: 0;
+  background-size: cover; background-position: center;
+  pointer-events: none;
+  opacity: .55;
+  mix-blend-mode: luminosity;   /* keeps each card's colour identity readable */
+}
+.card--white .card-photo { opacity: .42; }
+.card-photo::after {
+  content: ''; position: absolute; inset: 0;
+  background: linear-gradient(180deg, rgba(0, 0, 0, .5) 0%, rgba(0, 0, 0, .12) 38%, rgba(0, 0, 0, .62) 100%);
+}
+.card--white .card-photo::after {
+  background: linear-gradient(180deg, rgba(255, 255, 255, .58) 0%, rgba(255, 255, 255, .2) 38%, rgba(255, 255, 255, .66) 100%);
+}
+.card-top, .card-cost { position: relative; }   /* above the artwork */
+
 .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 4px; }
 .card-pts { font-size: 1.45rem; font-weight: 850; line-height: .95; text-shadow: 0 1px 2px rgba(0, 0, 0, .28); }
 .card--white .card-pts { text-shadow: none; }
@@ -448,6 +523,8 @@ h1, h2, h3, p { margin: 0; }
   border-radius: 50%;
   box-shadow: 0 1px 4px rgba(0, 0, 0, .3);
 }
+/* A pale stone on a pale card needs its own ground to sit on. */
+.card--white .card-gem { background: rgba(31, 38, 50, .14); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .16); }
 .card-gem svg { width: 17px; height: 17px; }
 .card-cost { display: flex; flex-wrap: wrap; gap: 3px; align-items: flex-end; }
 
@@ -588,6 +665,8 @@ h1, h2, h3, p { margin: 0; }
 .empty-note { color: var(--muted-2); font-size: .76rem; }
 
 .gem-ico { width: 18px; height: 18px; flex: 0 0 auto; }
+img.gem-photo { object-fit: cover; border-radius: 50%; }
+.token img.gem-photo { width: calc(var(--token) * .74); height: calc(var(--token) * .74); box-shadow: inset 0 0 6px rgba(0,0,0,.5); }
 
 /* Wide screens: the tray becomes one horizontal strip so the board stays tall.
    (Must come after the base .tray rules above to win the cascade.) */
@@ -704,7 +783,8 @@ h1, h2, h3, p { margin: 0; }
   .panel-title { font-size: .64rem; margin-bottom: 6px; letter-spacing: .08em; }
   .nobles-panel .panel-title { margin-bottom: 5px; }
   .noble { padding: 6px; gap: 4px; }
-  .noble-name { display: none; }          /* points + requirement is enough */
+  .noble-name, .noble-caption { display: none; }   /* points + requirement is enough */
+  .noble-portrait { height: 62px; }
   .noble-pts { font-size: 1.05rem; }
   .bank-panel .hint { display: none; }    /* shown contextually in the tray */
   .tier-row { margin-bottom: 8px; }

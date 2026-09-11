@@ -5,25 +5,8 @@
 
   var D = global.SplendorData;
   var E = global.SplendorEngine;
+  var Art = global.SplendorArt;
   var t = function (k, p) { return global.SplendorI18n.t(k, p); };
-
-  var GEM_PATHS = {
-    white: 'M12 1.5 22.5 9 12 22.5 1.5 9Z',
-    blue: 'M12 1.5 19 4.5 22.5 12 19 19.5 12 22.5 5 19.5 1.5 12 5 4.5Z',
-    green: 'M6.5 2.5h11l4 4v11l-4 4h-11l-4-4v-11Z',
-    red: 'M12 1.5 22.5 21H1.5Z',
-    black: 'M12 1.5 21 7v10l-9 5.5L3 17V7Z',
-    gold: 'M12 1.5 15 8.8l7.9.6-6 5.2 1.8 7.9L12 18.2 5.3 22.5l1.8-7.9-6-5.2 7.9-.6Z'
-  };
-
-  var GEM_FILL = {
-    white: ['#f4f7fc', '#aab6c8'],
-    blue: ['#5b97ea', '#1d4c96'],
-    green: ['#45c98c', '#11603e'],
-    red: ['#f06a6a', '#98252a'],
-    black: ['#5d5d6d', '#1b1b23'],
-    gold: ['#f6d26f', '#9a7418']
-  };
 
   var PLAYER_COLORS = ['#7c5cff', '#2fae72', '#e8b64c', '#e04b6b'];
 
@@ -33,10 +16,14 @@
     });
   }
 
+  /* Small contexts (pips, card badges, discount chips) always use the drawing. */
   function gemSvg(color, cls) {
-    var fill = GEM_FILL[color] || GEM_FILL.white;
-    return '<svg class="' + (cls || 'gem-ico') + '" viewBox="0 0 24 24" aria-hidden="true">' +
-      '<path d="' + GEM_PATHS[color] + '" fill="' + fill[0] + '" stroke="' + fill[1] + '" stroke-width="1.4"/></svg>';
+    return Art.gemIcon(color, cls);
+  }
+
+  /* Token-sized contexts prefer an installed photograph. */
+  function gemToken(color, cls) {
+    return Art.gem(color, cls);
   }
 
   function pip(color, count, covered, small) {
@@ -71,6 +58,7 @@
     return '<button type="button" class="' + cls.join(' ') + '"' +
       (opts.noAction ? '' : ' data-card="' + card.id + '" data-source="' + (opts.source || 'board') + '"') +
       ' aria-label="' + escapeHtml(label) + '">' +
+      (opts.mini ? '' : Art.cardArt(card.bonus)) +
       '<span class="card-top">' +
         '<span class="card-pts">' + (card.points || '') + '</span>' +
         '<span class="card-gem">' + gemSvg(card.bonus, 'gem-ico') + '</span>' +
@@ -85,6 +73,22 @@
 
   /* ------------------------------------------------------------ board */
 
+  /* A noble's portrait if one is installed, otherwise the engraved monogram. */
+  function nobleFace(noble) {
+    var name = D.NOBLE_NAMES[noble.id] || '';
+    var url = Art.nobleImage(noble.id);
+    var points = '<span class="noble-pts">' + noble.points + '</span>';
+
+    if (url) {
+      return '<div class="noble-portrait">' +
+        '<img src="' + url + '" alt="' + escapeHtml(name) + '" loading="lazy" decoding="async">' +
+        points + '<span class="noble-caption">' + escapeHtml(name) + '</span></div>';
+    }
+    return '<div class="noble-head">' + points +
+      '<span class="noble-crest" aria-hidden="true">' + escapeHtml(name.charAt(0)) + '</span>' +
+      '<span class="noble-name">' + escapeHtml(name) + '</span></div>';
+  }
+
   function renderNobles(root, state) {
     var player = E.currentPlayer(state);
     root.innerHTML = state.nobles.map(function (noble) {
@@ -93,8 +97,7 @@
         return pip(c, noble.req[c], (player.bonuses[c] || 0) >= noble.req[c], true);
       }).join('');
       return '<div class="noble' + (ready ? ' is-ready' : '') + '">' +
-        '<div class="noble-head"><span class="noble-pts">' + noble.points + '</span>' +
-        '<span class="noble-name">' + escapeHtml(D.NOBLE_NAMES[noble.id] || '') + '</span></div>' +
+        nobleFace(noble) +
         '<div class="noble-req">' + reqs + '</div></div>';
     }).join('') || '<p class="empty-note">—</p>';
   }
@@ -129,7 +132,7 @@
       return '<button type="button" class="token token--' + color + (counts[color] ? ' is-picked' : '') + '"' +
         ' data-token="' + color + '"' + (disabled ? ' disabled' : '') +
         ' aria-label="' + escapeHtml(t('gem.' + color)) + ': ' + left + '">' +
-        gemSvg(color, 'gem-ico') +
+        gemToken(color, 'gem-ico') +
         '<span class="token-count">' + left + '</span>' +
         (counts[color] ? '<span class="token-picked-badge">+' + counts[color] + '</span>' : '') +
         '</button>';
@@ -329,7 +332,7 @@
       var left = player.tokens[color] - (selected[color] || 0);
       return '<button type="button" class="token token--' + color + (selected[color] ? ' is-picked' : '') + '"' +
         ' data-discard="' + color + '"' + (left <= 0 ? ' disabled' : '') + '>' +
-        gemSvg(color, 'gem-ico') + '<span class="token-count">' + left + '</span>' +
+        gemToken(color, 'gem-ico') + '<span class="token-count">' + left + '</span>' +
         (selected[color] ? '<span class="token-picked-badge">' + selected[color] + '</span>' : '') + '</button>';
     }).join('');
 
@@ -352,8 +355,7 @@
       if (!noble) return '';
       var reqs = Object.keys(noble.req).map(function (c) { return pip(c, noble.req[c], true, true); }).join('');
       return '<button type="button" class="noble" data-noble="' + noble.id + '" style="cursor:pointer">' +
-        '<div class="noble-head"><span class="noble-pts">' + noble.points + '</span>' +
-        '<span class="noble-name">' + escapeHtml(D.NOBLE_NAMES[noble.id] || '') + '</span></div>' +
+        nobleFace(noble) +
         '<div class="noble-req">' + reqs + '</div></button>';
     }).join('');
 
@@ -473,8 +475,10 @@
 
   global.SplendorUI = {
     PLAYER_COLORS: PLAYER_COLORS,
+    nobleFace: nobleFace,
     escapeHtml: escapeHtml,
     gemSvg: gemSvg,
+    gemToken: gemToken,
     renderNobles: renderNobles,
     renderTiers: renderTiers,
     renderBank: renderBank,

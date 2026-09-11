@@ -27,6 +27,11 @@ the physical game is played.
 - Complete Splendor ruleset: 90 development cards, 10 noble tiles, gold wildcards, the
   10-token limit, reserving from the deck, the final round after 15 points and the
   fewest-cards tiebreak.
+- Gems are drawn as cut stones — a round brilliant, a cushion, a step cut, an oval, a
+  polished cabochon and a struck coin — as one SVG sprite instantiated everywhere, so the
+  board costs one copy of the geometry. **Real photographs and paintings drop in on top**:
+  `node tools/fetch-art.js` installs public-domain portraits of the ten historical figures
+  the nobles are named after, plus free-licensed photos of cut stones.
 - Responsive from a 320px phone to a wide desktop: on phones the board scrolls and the
   current player's tray is docked to the bottom; on desktop the whole board fits on screen.
 - Three bot strengths. The bots evaluate every legal move one ply deep, weighing prestige
@@ -92,6 +97,36 @@ The first player to 15 points triggers the last round; when it finishes, the hig
 wins, and a tie goes to whoever bought fewer cards. The in-game **Rules** dialog has the full
 text in both languages.
 
+## Artwork, and using real images
+
+Out of the box every gem, card face and noble tile is **drawn**: `assets/js/art.js` holds one
+hidden SVG sprite with a faceted stone per gem colour, and the rest of the interface
+instantiates it with `<use>`. That keeps gradient ids from colliding and means a full board
+reuses one copy of each stone.
+
+Photographs win over drawings wherever they are installed. To install them:
+
+```bash
+node tools/fetch-art.js --dry-run   # show what it would download
+node tools/fetch-art.js             # nobles + gems, then rewrite the manifest
+```
+
+The script pulls from Wikipedia and Wikimedia Commons, reads each candidate's licence from
+the API and **refuses anything that is not public domain or a free CC/GFDL licence**, writes
+the files into `assets/img/`, rewrites `assets/img/manifest.js`, and records every source,
+author and licence in `ATTRIBUTION.md`. Portraits work especially well here because the ten
+noble tiles are named after real people — Mary Stuart, Charles V, Machiavelli, Suleiman and
+the rest — whose painted portraits are centuries out of copyright.
+
+Prefer your own images? Drop them into `assets/img/{gems,cards,nobles}/` and list them in
+`assets/img/manifest.js`; see `assets/img/README.md` for the filenames and recommended sizes.
+Anything you leave out keeps its drawing, so a partial set is fine, and photographs are only
+used where they have room to read — a 16px cost pip stays drawn either way.
+
+**Do not add the retail game's artwork.** Splendor's card illustrations, noble portraits and
+logo are copyrighted by Space Cowboys; this project ships none of them and the fetch script
+will not install them.
+
 ## Development
 
 ```
@@ -101,10 +136,13 @@ assets/js/data.js          the 90 cards and 10 nobles, generated from cost patte
 assets/js/engine.js        rules engine — pure state machine, no DOM
 assets/js/ai.js            computer opponents (one-ply search + evaluation)
 assets/js/i18n.js          Vietnamese and English strings
+assets/js/art.js           gem artwork (SVG sprite) + the optional photo layer
+assets/img/manifest.js     which real image files are installed, if any
 assets/js/tutorial.js      the guided walkthrough (scripted board + coach marks)
 assets/js/ui.js            rendering and dialogs
 assets/js/app.js           controller — menus, turn loop, persistence
-tests/engine.test.js       rules tests + 200-game self-play invariant check
+tools/fetch-art.js         downloads free-licensed portraits and gem photographs
+tests/engine.test.js       rules tests + self-play invariant check
 ```
 
 The engine never touches the DOM and never produces user-facing text: failures come back as
@@ -161,6 +199,11 @@ cùng chơi trên một máy — đúng như khi chơi bàn thật.
 - Đầy đủ luật Splendor: 90 thẻ phát triển, 10 thẻ quý tộc, vàng thay mọi màu, giới hạn 10
   token, giữ thẻ úp từ chồng, vòng cuối sau khi có người đạt 15 điểm, và luật hoà (ai mua ít
   thẻ hơn thì thắng).
+- Đá quý được vẽ thành khối đá thật có các mặt cắt (brilliant, cushion, emerald cut, oval,
+  cabochon và đồng vàng dập nổi) bằng một sprite SVG dùng lại cho toàn bàn. **Muốn dùng ảnh
+  thật thì chỉ cần bỏ ảnh vào**: chạy `node tools/fetch-art.js` để tải tranh chân dung
+  public-domain của 10 nhân vật lịch sử mà thẻ quý tộc được đặt tên theo, kèm ảnh đá quý có
+  giấy phép tự do.
 - Giao diện tương thích cả điện thoại và máy tính: trên điện thoại bàn chơi cuộn được và khay
   của người đang chơi luôn nằm dưới cùng; trên máy tính toàn bộ bàn hiện trong một màn hình.
 - Máy chơi ở ba mức độ, cân nhắc điểm uy tín, chiết khấu lâu dài, tiến độ tới quý tộc và cả
@@ -182,6 +225,29 @@ viên); giữ 1 thẻ và nhận 1 vàng (giữ tối đa 3 thẻ); hoặc mua 1
 giữ. Thẻ đã mua cho bạn một viên đá vĩnh viễn dùng làm chiết khấu. Cuối lượt nếu giữ quá 10
 token thì phải trả lại. Đủ chiết khấu theo yêu cầu thì quý tộc đến thăm, tặng 3 điểm. Nút
 **Luật** trong game có hướng dẫn đầy đủ.
+
+## Dùng ảnh thật
+
+Mặc định toàn bộ đá quý, mặt thẻ và ô quý tộc đều được **vẽ bằng vector** (`assets/js/art.js`).
+Nếu muốn ảnh thật:
+
+```bash
+node tools/fetch-art.js --dry-run   # xem trước sẽ tải những gì
+node tools/fetch-art.js             # tải rồi tự cập nhật manifest
+```
+
+Script lấy ảnh từ Wikipedia / Wikimedia Commons, đọc giấy phép qua API và **từ chối mọi file
+không phải public domain hoặc giấy phép tự do (CC0/CC BY/CC BY-SA/GFDL)**, rồi ghi nguồn và
+tác giả vào `ATTRIBUTION.md`. Tranh chân dung rất hợp ở đây vì 10 quý tộc trong Splendor đều
+đặt theo người thật — Mary Stuart, Charles V, Machiavelli, Suleiman… — tranh vẽ họ đã hết bản
+quyền từ lâu.
+
+Muốn dùng ảnh của riêng bạn: bỏ file vào `assets/img/{gems,cards,nobles}/` rồi khai báo trong
+`assets/img/manifest.js` (xem `assets/img/README.md` để biết tên file và kích thước gợi ý).
+Thiếu ảnh nào thì chỗ đó vẫn dùng hình vẽ, nên bỏ vào từng phần cũng được.
+
+**Không dùng ảnh gốc của bản board game bán ngoài hàng** — tranh thẻ, chân dung và logo của
+Splendor thuộc bản quyền Space Cowboys; project này không chứa và script cũng không tải chúng.
 
 ## Chạy thử
 
