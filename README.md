@@ -50,11 +50,13 @@ python3 -m http.server 8000   # then visit http://localhost:8000
 
 The site is plain static files at the repository root, so either Pages source works.
 
-**Option A — GitHub Actions (runs the tests first).** In
-**Settings → Pages → Build and deployment**, set **Source: GitHub Actions**. The workflow in
-`.github/workflows/pages.yml` then runs `tests/engine.test.js` on every push and publishes the
+**Option A — GitHub Actions (runs the tests first).** The workflow in
+`.github/workflows/pages.yml` runs `tests/engine.test.js` on every push and publishes the
 repository root when the push is to the default branch (whatever it is named) or when you run
-the workflow by hand from the Actions tab. If the deploy step is rejected because the
+the workflow by hand from the Actions tab. It passes `enablement: true` to
+`actions/configure-pages`, so the first successful run switches Pages on by itself with
+GitHub Actions as the source — no repository setting to change. If the deploy step is rejected
+because the
 `github-pages` environment only allows the default branch, either merge this branch into the
 default branch or add the branch under **Settings → Environments → github-pages → Deployment
 branches**.

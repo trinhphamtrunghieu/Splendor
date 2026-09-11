@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
       - name: Run the rules test suite
         run: node tests/engine.test.js
 
@@ -41,6 +41,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        # Turns Pages on (with GitHub Actions as the source) the first time this
+        # runs, so no manual repository setting is needed.
+        with:
+          enablement: true
       - name: Upload the site
         uses: actions/upload-pages-artifact@v3
         with:
