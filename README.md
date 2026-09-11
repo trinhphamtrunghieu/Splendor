@@ -108,8 +108,13 @@ node tests/engine.test.js
 ```
 
 They cover deck composition, each turn action and its rejections, the token limit, noble
-visits and choices, the final round, tiebreaks, and 200 bot-vs-bot games checking that tokens
-and prestige points are conserved and that every game terminates.
+visits and choices, the final round, tiebreaks, and 60 bot-vs-bot games checking that tokens
+and prestige points are conserved and that every game terminates. For a deeper soak, raise
+the game count:
+
+```bash
+SPLENDOR_GAMES=500 node tests/engine.test.js
+```
 
 ## Cards
 

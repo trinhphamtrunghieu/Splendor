@@ -393,10 +393,14 @@ check('legalActions never offers an unaffordable purchase', function () {
 
 console.log('\nself-play (engine + AI invariants)');
 
-check('200 bot games end cleanly with conserved tokens and points', function () {
+/* Each game is a few thousand evaluated positions, so the default stays small
+   enough for CI. Raise it for a deeper soak: SPLENDOR_GAMES=500 node tests/... */
+var SELF_PLAY_GAMES = Number(process.env.SPLENDOR_GAMES || 60);
+
+check(SELF_PLAY_GAMES + ' bot games end cleanly with conserved tokens and points', function () {
   var sizes = [2, 3, 4];
   var difficulties = ['easy', 'normal', 'hard'];
-  for (var g = 0; g < 200; g++) {
+  for (var g = 0; g < SELF_PLAY_GAMES; g++) {
     var count = sizes[g % sizes.length];
     var players = [];
     for (var i = 0; i < count; i++) {
