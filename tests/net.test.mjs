@@ -357,5 +357,174 @@ const until = (fn, ms = 6000) => new Promise((resolve, reject) => {
   await room.close();
 }
 
+{
+  console.log('\nRenaming in the lobby\n');
+  const PORT = 9404;
+  const URL = 'ws://127.0.0.1:' + PORT;
+  const room = await startBroker(PORT);
+
+  const host = Net.create({ clientId: 'rn-host' });
+  host.host({ room: 'RENAM', name: 'Hieu', brokerUrl: URL });
+  await until(() => host.connected);
+
+  const guest = Net.create({ clientId: 'rn-guest' });
+  guest.join({ room: 'RENAM', name: 'Bạn', brokerUrl: URL });
+  await until(() => guest.status().seats.length === 2, 6000);
+  check('the guest arrives under the name it typed',
+    guest.status().seats[1].name === 'Bạn', guest.status().seats[1].name);
+
+  /* A guest cannot edit the roster: it asks, and the host's copy is the one
+     that travels back to everybody. */
+  guest.rename('Lan');
+  await until(() => guest.status().seats[1].name === 'Lan', 5000);
+  check('a guest renaming itself reaches the host and comes back', true);
+  check('and the host agrees about the new name', host.seats[1].name === 'Lan',
+    host.seats[1].name);
+
+  const renames = [];
+  host.on('renamed', (info) => renames.push(info));
+  guest.rename('Nam');
+  await until(() => renames.length === 1, 5000);
+  check('the host reports who changed what', renames[0].from === 'Lan' && renames[0].to === 'Nam',
+    JSON.stringify(renames[0]));
+
+  /* The host renames itself without asking anyone. */
+  host.rename('Hiếu');
+  await until(() => guest.status().seats[0].name === 'Hiếu', 5000);
+  check('the host can rename itself too', true);
+
+  /* Nothing dangerous or absurd gets into a name. */
+  host.rename('  Tên\n\tdài   quá  đi   mất   thật   đấy  ');
+  await wait(250);
+  const long = host.seats[0].name;
+  check('a name is trimmed, flattened and cut to length',
+    long.length <= Net.MAX_NAME && !/[\n\t]/.test(long) && !/  /.test(long), JSON.stringify(long));
+
+  const before = host.seats[0].name;
+  host.rename('   ');
+  host.rename('');
+  host.rename(null);
+  await wait(200);
+  check('an empty name is refused rather than blanking the seat',
+    host.seats[0].name === before, host.seats[0].name);
+
+  /* A guest re-announces itself on every reconnect. If it announced the name
+     it arrived with, a blip would quietly undo the rename. */
+  const guestKey = Object.keys(room.broker.clients).find((k) => k.startsWith('rn-guest'));
+  room.broker.clients[guestKey].conn.destroy();
+  await until(() => guest.connected === false, 5000).catch(() => {});
+  await until(() => guest.connected === true, 12000);
+  await wait(500);
+  check('a reconnect keeps the chosen name rather than the one it arrived with',
+    host.seats[1].name === 'Nam', host.seats[1].name);
+
+  /* The promise to the player is "until the round starts". */
+  host.broadcast(E.createGame({ players: [{ name: 'A', type: 'human' }, { name: 'B', type: 'human' }] }));
+  await until(() => guest.status().phase === 'playing', 5000);
+  check('renaming is closed once the cards are dealt', host.canRename() === false);
+  const locked = host.seats[0].name;
+  check('the host refuses its own late rename', host.rename('Khác') === null);
+  guest.rename('Khác');
+  await wait(300);
+  check('and ignores a guest asking late', host.seats[0].name === locked && host.seats[1].name !== 'Khác',
+    host.seats.map((s) => s.name).join(','));
+
+  [host, guest].forEach((c) => c.leave());
+  await room.close();
+}
+
+{
+  console.log('\nTable talk\n');
+  const PORT = 9405;
+  const URL = 'ws://127.0.0.1:' + PORT;
+  const room = await startBroker(PORT);
+
+  const host = Net.create({ clientId: 'ch-host' });
+  host.host({ room: 'CHATX', name: 'Hieu', brokerUrl: URL });
+  await until(() => host.connected);
+  const guest = Net.create({ clientId: 'ch-guest' });
+  guest.join({ room: 'CHATX', name: 'Lan', brokerUrl: URL });
+  await until(() => guest.status().seats.length === 2, 6000);
+
+  const heard = [];
+  guest.on('chat', (line) => heard.push(line));
+
+  host.sendChat('Chào cả nhà');
+  await until(() => heard.length === 1, 5000);
+  check('a line from the host reaches the guest', heard[0].text === 'Chào cả nhà', heard[0].text);
+  check('it is attributed to the player who said it', heard[0].name === 'Hieu', heard[0].name);
+  check('and the guest knows it was not its own', heard[0].mine === false);
+
+  /* Everyone sees one order of messages, ours included: the broker is what
+     decides, not each browser's optimism. */
+  await until(() => host.chat.length === 1, 5000);
+  check('the speaker sees its own line come back', host.chat[0].mine === true);
+
+  await wait(400);
+  guest.sendChat('Chào bạn');
+  await until(() => host.chat.length === 2, 5000);
+  check('a line from the guest reaches the host', host.chat[1].text === 'Chào bạn');
+  check('the host can tell it apart from its own', host.chat[1].mine === false);
+  check('both sides agree on the order',
+    host.chat.map((l) => l.text).join('|') === guest.chat.map((l) => l.text).join('|'),
+    host.chat.map((l) => l.text).join('|') + ' vs ' + guest.chat.map((l) => l.text).join('|'));
+
+  /* Chat is not refereed, so it must keep working during a game too. */
+  host.broadcast(E.createGame({ players: [{ name: 'Hieu', type: 'human' }, { name: 'Lan', type: 'human' }] }));
+  await until(() => guest.status().phase === 'playing', 5000);
+  await wait(400);
+  guest.sendChat('Lượt của ai đấy');
+  await until(() => host.chat.length === 3, 5000);
+  check('the table can still talk after the game has started', host.chat[2].text === 'Lượt của ai đấy');
+
+  /* Nothing a peer sends can wreck another table. */
+  await wait(400);
+  const huge = 'x'.repeat(5000);
+  guest.sendChat(huge);
+  await until(() => host.chat.length === 4, 5000);
+  check('an overlong line is cut to size', host.chat[3].text.length === Net.MAX_CHAT,
+    'length ' + host.chat[3].text.length);
+
+  await wait(400);
+  check('an empty line is not sent at all', guest.sendChat('   ') === null);
+  check('nor is a line of newlines', guest.sendChat('\n\n\t') === null);
+
+  /* A stuck key must not flood a shared public broker. */
+  await wait(400);
+  const first = guest.sendChat('một');
+  const second = guest.sendChat('hai');
+  check('a second line in the same instant is held back', first !== null && second === null);
+
+  /* Notes about what happened go in the same stream, and are never sent. */
+  await wait(500);                       // let the lines above finish arriving
+  const before = guest.chat.length;
+  const hostHeard = host.chat.length;
+  guest.note('Lan đã vào phòng.');
+  check('a note lands in the log as a note, not as something said',
+    guest.chat.length === before + 1 && guest.chat[before].system === true);
+  check('a note is not attributed to anyone', guest.chat[before].mine === undefined);
+  await wait(300);
+  check('and it never leaves this browser', host.chat.length === hostHeard,
+    'host heard ' + host.chat.length + ', expected ' + hostHeard);
+  check('an empty note is not recorded', guest.note('  ') === null);
+
+  /* The log is bounded whatever fills it: a long game cannot grow it without
+     limit, and notes must not slip past the cap either. */
+  for (let i = 0; i < Net.CHAT_HISTORY + 40; i++) guest.note('nốt ' + i);
+  check('the kept history is bounded', guest.chat.length === Net.CHAT_HISTORY,
+    'kept ' + guest.chat.length);
+  check('and it is the newest lines that are kept',
+    guest.chat[guest.chat.length - 1].text === 'nốt ' + (Net.CHAT_HISTORY + 39),
+    guest.chat[guest.chat.length - 1].text);
+
+  /* Leaving a public broker should not leave the room's chatter on it. */
+  check('there was something to forget', host.chat.length > 0);
+  host.leave();
+  check('leaving forgets what was said', host.chat.length === 0);
+
+  guest.leave();
+  await room.close();
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
 process.exit(fail ? 1 : 0);

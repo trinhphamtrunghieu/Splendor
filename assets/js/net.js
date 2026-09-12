@@ -12,8 +12,15 @@
  *   view/<clientId>   retained  that player's view of the game state
  *   join                        guest -> host: "seat me", with a name
  *   intent                      guest -> host: "I want to play this move"
+ *   rename                      guest -> host: "call me this instead"
+ *   chat                        everyone -> everyone: table talk
  *   reject/<clientId>           host -> guest: why a join was refused
  *   bye/<clientId>              the broker's last will for a dropped player
+ *
+ * Chat is the one topic the host does not referee: it needs no rules, and
+ * routing it through the host would silence the table whenever the host's
+ * connection hiccuped. It is also the one topic deliberately not retained —
+ * this is a public broker, and a room's chatter should not outlive the room.
  *
  * Retained messages do the heavy lifting: a player who joins late, reloads the
  * page or comes back from a tunnel is handed the current room and their own
@@ -45,6 +52,28 @@
   var CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   var CODE_LENGTH = 5;
   var MAX_SEATS = 4;
+
+  /* Names and chat lines arrive from other people's browsers, so every one of
+     them is trimmed and cut to size on the way in as well as on the way out:
+     a peer that sends a megabyte of text, or a name made of newlines, must not
+     be able to wreck anyone else's table. */
+  var MAX_NAME = 16;
+  var MAX_CHAT = 240;
+  var CHAT_HISTORY = 120;       // what one client keeps to show; older lines fall off
+
+  /* Strips the characters that would break a line of text out of its place —
+     controls, newlines, and the invisible direction overrides — then collapses
+     the leftover whitespace. */
+  function clean(text, limit) {
+    return String(text == null ? '' : text)
+      .replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, limit);
+  }
+
+  function cleanName(text) { return clean(text, MAX_NAME); }
+  function cleanChat(text) { return clean(text, MAX_CHAT); }
 
   function roomCode() {
     var out = '';
@@ -99,7 +128,8 @@
       joined: false,            // a room message has actually arrived
       hostGone: false,          // the broker told us the host dropped
       lastError: null,          // a coded failure the UI must explain
-      notice: null              // transient chatter, e.g. "reconnecting"
+      notice: null,             // transient chatter, e.g. "reconnecting"
+      chat: []                  // what this client has heard said, oldest first
     };
 
     var client = null;
@@ -108,6 +138,8 @@
     var wantsLeave = false;
     var connectTimer = null;    // the broker never answered
     var roomTimer = null;       // the broker answered but the room is not there
+    var lastChatAt = 0;         // keeps a stuck key off a shared public broker
+    var wantedName = null;      // what this player asked to be called, latest wins
 
     /* Long enough for a slow mobile connection, short enough that nobody sits
        watching "connecting" wondering whether it is broken. */
@@ -218,7 +250,8 @@
       net.room = normaliseCode(config.room) || roomCode();
       net.hostId = net.clientId;
       net.phase = 'lobby';
-      net.seats = [{ id: net.clientId, name: config.name || 'Host', type: 'human', online: true }];
+      wantedName = cleanName(config.name) || 'Host';
+      net.seats = [{ id: net.clientId, name: wantedName, type: 'human', online: true }];
 
       /* If the host's tab dies the guests would otherwise sit in front of a
          frozen board forever, so let the broker announce it for us. */
@@ -235,6 +268,8 @@
         client.publish(topic(net.room, 'hostgone'), '', { retain: true });
         client.subscribe(topic(net.room, 'join'));
         client.subscribe(topic(net.room, 'intent'));
+        client.subscribe(topic(net.room, 'rename'));
+        client.subscribe(topic(net.room, 'chat'));
         client.subscribe(topic(net.room, 'bye/+'));
         publishRoom();
         if (state) publishViews();
@@ -306,7 +341,8 @@
         var seat = seatOf(message.id);
         if (seat >= 0) {                                  // a known player came back
           net.seats[seat].online = true;
-          if (message.name) net.seats[seat].name = message.name;
+          var returning = cleanName(message.name);
+          if (returning) net.seats[seat].name = returning;
           publishRoom();
           publishViews();
           emit('seated', { clientId: message.id, seat: seat, rejoined: true });
@@ -320,7 +356,9 @@
           publish('reject/' + message.id, { t: 'reject', reason: 'full' });
           return;
         }
-        net.seats.push({ id: message.id, name: message.name || 'Player', type: 'human', online: true });
+        net.seats.push({
+          id: message.id, name: cleanName(message.name) || 'Player', type: 'human', online: true
+        });
         publishRoom();
         emit('seated', { clientId: message.id, seat: net.seats.length - 1, rejoined: false });
         return;
@@ -328,6 +366,16 @@
 
       if (MQTT.matches(topic(net.room, 'intent'), topicName)) {
         emit('intent', message);
+        return;
+      }
+
+      if (MQTT.matches(topic(net.room, 'rename'), topicName)) {
+        applyRename(message.id, message.name);
+        return;
+      }
+
+      if (MQTT.matches(topic(net.room, 'chat'), topicName)) {
+        receiveChat(message);
         return;
       }
 
@@ -347,6 +395,7 @@
       net.role = 'guest';
       net.room = normaliseCode(config.room);
       net.phase = 'lobby';
+      wantedName = cleanName(config.name) || 'Player';
 
       openSocket(config.brokerUrl, {
         topic: topic(net.room, 'bye/' + net.clientId),
@@ -362,7 +411,10 @@
         client.subscribe(topic(net.room, 'view/' + net.clientId));
         client.subscribe(topic(net.room, 'reject/' + net.clientId));
         client.subscribe(topic(net.room, 'hostgone'));
-        publish('join', { t: 'join', id: net.clientId, name: config.name || 'Player' });
+        client.subscribe(topic(net.room, 'chat'));
+        /* A reconnect runs this again, so it must carry the name the player
+           has since chosen rather than the one they arrived with. */
+        publish('join', { t: 'join', id: net.clientId, name: wantedName });
         watchForRoom();
         emit('status', status());
       });
@@ -392,6 +444,10 @@
           emit('status', status());
           return;
         }
+        if (topicName === topic(net.room, 'chat')) {
+          receiveChat(message);
+          return;
+        }
         if (topicName === topic(net.room, 'view/' + net.clientId)) {
           emit('view', message);
           return;
@@ -407,6 +463,101 @@
     net.sendIntent = function (action) {
       publish('intent', { t: 'intent', id: net.clientId, action: action, at: Date.now() });
     };
+
+    /* ---------------------------------------------------------- renaming */
+
+    /* Names are settled in the lobby. Once the cards are dealt the engine's
+       players carry their own copy of the name, and the log behind them is
+       already written in it, so a later change would rewrite history. */
+    net.canRename = function () { return net.phase === 'lobby'; };
+
+    /* Host side: the roster is ours, so change it and tell the room. Returns
+       the name that was actually taken, or null if nothing changed. */
+    function applyRename(clientId, wanted) {
+      if (!net.canRename()) return null;
+      var seat = seatOf(clientId);
+      var name = cleanName(wanted);
+      if (seat < 0 || !name || net.seats[seat].name === name) return null;
+      var was = net.seats[seat].name;
+      net.seats[seat].name = name;
+      publishRoom();
+      emit('renamed', { clientId: clientId, seat: seat, from: was, to: name });
+      return name;
+    }
+    net.applyRename = applyRename;
+
+    /* What either side calls when the player asks to be called something else.
+       A guest has to ask the host, which is also what makes the change stick
+       across a reconnect: the host's roster is the one that is republished. */
+    net.rename = function (wanted) {
+      var name = cleanName(wanted);
+      if (!name || !net.canRename()) return null;
+      wantedName = name;
+      if (net.role === 'host') return applyRename(net.clientId, name);
+      publish('rename', { t: 'rename', id: net.clientId, name: name });
+      return name;
+    };
+    net.wantedName = function () { return wantedName; };
+
+    /* -------------------------------------------------------------- chat */
+
+    /* Every line, ours included, arrives back through the broker: the table
+       sees one order of messages, and a line that shows up is a line that was
+       actually delivered rather than one we only hoped to send. */
+    function receiveChat(message) {
+      if (!message || message.t !== 'chat') return;
+      var text = cleanChat(message.text);
+      if (!text) return;
+      var seat = seatOf(message.id);
+      var line = {
+        id: String(message.id || '').slice(0, 64),
+        seat: seat,
+        name: cleanName(message.name) || (seat >= 0 ? net.seats[seat].name : '?'),
+        text: text,
+        mine: message.id === net.clientId,
+        at: Date.now()
+      };
+      remember(line);
+      emit('chat', line);
+    }
+
+    /* The one way into the chat log, so its cap holds for everything that gets
+       written there — said out loud or merely noted. */
+    function remember(line) {
+      net.chat.push(line);
+      if (net.chat.length > CHAT_HISTORY) net.chat.splice(0, net.chat.length - CHAT_HISTORY);
+    }
+
+    /* Something that happened rather than something that was said. Worked out
+       locally from the roster every client already has, so it is never sent and
+       never forgeable. */
+    net.note = function (text) {
+      var body = cleanChat(text);
+      if (!body) return null;
+      var line = { system: true, text: body, at: Date.now() };
+      remember(line);
+      emit('chat', line);
+      return line;
+    };
+
+    /* Returns the text that went out, or null when there was nothing to say,
+       the room is not there, or the player is leaning on the send key. */
+    net.sendChat = function (text) {
+      var body = cleanChat(text);
+      if (!body || !client || !net.room) return null;
+      var now = Date.now();
+      if (now - lastChatAt < 350) return null;
+      lastChatAt = now;
+      publish('chat', {
+        t: 'chat', id: net.clientId, name: myName(), text: body, at: now
+      });
+      return body;
+    };
+
+    function myName() {
+      var seat = seatOf(net.clientId);
+      return seat >= 0 ? net.seats[seat].name : (wantedName || 'Player');
+    }
 
     /* --------------------------------------------------------------- leaving */
 
@@ -431,6 +582,7 @@
       net.role = null;
       net.room = null;
       state = null;
+      net.chat = [];
       emit('status', status());
     };
 
@@ -450,6 +602,11 @@
     normaliseCode: normaliseCode,
     isValidCode: isValidCode,
     topic: topic,
-    viewFor: viewFor
+    viewFor: viewFor,
+    cleanName: cleanName,
+    cleanChat: cleanChat,
+    MAX_NAME: MAX_NAME,
+    MAX_CHAT: MAX_CHAT,
+    CHAT_HISTORY: CHAT_HISTORY
   };
 })(typeof window !== 'undefined' ? window : globalThis);

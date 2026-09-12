@@ -28,6 +28,14 @@ trade-offs are.
 - **Online play with no server**: rooms over MQTT-on-WebSocket, host-authoritative, with
   hidden information actually hidden — each player is sent only what Splendor's rules let them
   see. Reconnects, refreshes and dropped players are handled.
+- **Change your name in the lobby**, as often as you like, right up until the host deals —
+  after that the name is written into the game and its log, so it stays put. The change
+  travels through the host's roster, which is what makes it survive a reconnect, and the room
+  is told who used to be who rather than a name silently changing on a seat.
+- **Room chat**, in the lobby and during the game: a panel under the seats while you wait, and
+  a button in the top bar with an unread count once the cards are out. Who joined, who
+  renamed, who dropped and when the game started are noted in the same stream, so the room
+  reads as one history.
 - Complete Splendor ruleset: 90 development cards, 10 noble tiles, gold wildcards, the
   10-token limit, reserving from the deck, the final round after 15 points and the
   fewest-cards tiebreak.
@@ -164,6 +172,10 @@ resolves is indistinguishable from a bug:
   they are the referee, after all. Play with people you like.
 - **wss:// is required.** The published site is https, so a `ws://` broker is blocked by the
   browser as mixed content. All the built-in options are `wss://`.
+- **Chat is not private and not kept.** It goes through the same public broker as the game,
+  unencrypted, so treat it as talking across a table in a cafe. It is deliberately not
+  retained: nothing is left sitting on the broker after the room ends, which also means a
+  player who joins or reloads late sees only what is said from then on.
 
 ### How it is built
 
@@ -328,7 +340,16 @@ cũng không cần server nào của chúng ta — xem phần *Chơi qua mạng*
   giấy phép tự do.
 - Một dòng ngay trên khay luôn cho biết đang là lượt của ai — *Lượt của bạn*, *Đang chờ Lan…*,
   *Máy 1 đang suy nghĩ…* — và ngân hàng đá quý bị khoá (mờ đi rõ ràng) khi chưa tới lượt bạn,
-  thay vì cho chọn rồi mới báo lỗi lúc xác nhận.
+  thay vì cho chọn rồi mới báo lỗi lúc xác nhận. Khi mất kết nối, dòng này báo rõ và khoá bàn
+  lại: người chơi không bị mời đi trong lúc nước đi của họ không tới được ai.
+- **Đổi tên trong phòng chờ**, đổi bao nhiêu lần cũng được, cho tới đúng lúc chủ phòng bấm Bắt
+  đầu — sau đó tên đã được ghi vào ván và vào diễn biến nên giữ nguyên. Tên mới đi qua danh
+  sách của chủ phòng, nhờ vậy mạng chớp tắt rồi vào lại vẫn còn, và cả phòng được cho biết ai
+  vừa là ai chứ không phải tự nhiên thấy tên trên ghế đổi khác.
+- **Nhắn tin trong phòng**, cả lúc chờ và lúc đang chơi: một khung ngay dưới danh sách người
+  chơi khi còn ở phòng chờ, và một nút trên thanh trên cùng kèm số tin chưa đọc khi đã vào ván.
+  Ai vào, ai đổi tên, ai mất kết nối, ván bắt đầu lúc nào — đều được ghi cùng một dòng chảy để
+  đọc lại thành một mạch.
 - **Trên điện thoại cả bàn chơi nằm gọn trong một màn hình, không phải cuộn.** Từ màn hình
   rộng 320px trở lên, ba hàng thẻ, ngân hàng và khay của bạn đều hiện cùng lúc: bốn thẻ mở và
   ô đếm chồng thẻ được tính theo chiều rộng màn hình, ba hàng chia đều phần cao còn lại, và
@@ -387,6 +408,10 @@ thì không phân biệt được với hỏng:
 - **Không chống gian lận ngoài việc lược bỏ thông tin.** Chủ phòng vẫn xem được state của chính
   họ — họ là trọng tài mà. Hãy chơi với người bạn tin.
 - **Phải dùng wss://** vì trang chạy trên https; broker `ws://` sẽ bị trình duyệt chặn.
+- **Tin nhắn không riêng tư và không được lưu.** Nó đi qua đúng cái broker công cộng mà ván
+  đang dùng, không mã hoá — cứ coi như đang nói chuyện ở bàn cà phê. Việc không lưu là có chủ
+  ý: hết phòng là không còn gì đọng lại trên broker, đổi lại người vào muộn hoặc tải lại trang
+  chỉ thấy những gì được nói từ lúc đó trở đi.
 
 ## Mới chơi lần đầu?
 

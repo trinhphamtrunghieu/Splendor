@@ -11,6 +11,7 @@ require('../assets/js/art.js');
 require('../assets/js/i18n.js');
 require('../assets/js/mqtt-lite.js');
 require('../assets/js/net.js');
+require('../assets/js/ui.js');        // the rendering helpers are pure strings
 var fetchArt = require('../tools/fetch-art.js');
 
 var D = window.SplendorData;
@@ -441,6 +442,105 @@ check('the markup has exactly one screen marked active to begin with', function 
   var active = screens.filter(function (cls) { return cls.indexOf('is-active') >= 0; });
   assert(screens.length >= 3, 'expected menu, lobby and game screens, found ' + screens.length);
   eq(active.length, 1, 'exactly one screen may start active, found: ' + active.join(', '));
+});
+
+console.log('\nnames and chat');
+
+check('a name and a chat line are both cut down to something safe', function () {
+  var Net = window.SplendorNet;
+  /* Both arrive from other people's browsers. */
+  eq(Net.cleanName('  Nguyễn   Văn   A  '), 'Nguyễn Văn A');
+  eq(Net.cleanName('a'.repeat(80)).length, Net.MAX_NAME);
+  eq(Net.cleanName('   '), '');
+  eq(Net.cleanName(null), '');
+  eq(Net.cleanName('x\u202ey'), 'x y', 'direction overrides must not survive');
+  eq(Net.cleanName('one\ntwo\tthree'), 'one two three');
+  eq(Net.cleanChat('x'.repeat(1000)).length, Net.MAX_CHAT);
+  eq(Net.cleanChat('\n\n\t '), '');
+  assert(Net.MAX_CHAT > Net.MAX_NAME, 'a chat line may be longer than a name');
+});
+
+check('the name field cannot accept more than a name may hold', function () {
+  /* The field and the protocol have to agree, or the player types a name that
+     is silently trimmed the moment it is sent. */
+  var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
+  assert(/nameField\.maxLength = Net\.MAX_NAME/.test(source),
+    'app.js must set the field length from the protocol limit');
+});
+
+check('renaming is open in the lobby and shut once the cards are dealt', function () {
+  var net = window.SplendorNet.create({ clientId: 'solo' });
+  net.phase = 'lobby';
+  eq(net.canRename(), true);
+  net.phase = 'playing';
+  eq(net.canRename(), false);
+  eq(net.rename('Muộn'), null, 'a late rename must be refused');
+  net.phase = 'ended';
+  eq(net.canRename(), false);
+});
+
+check('a chat line is escaped on its way onto the page', function () {
+  var UI = window.SplendorUI;
+  var html = UI.chatList([
+    { seat: 0, name: '<img src=x onerror=alert(1)>', text: '<script>bad()</scr' + 'ipt>', mine: false }
+  ]);
+  assert(html.indexOf('<script') < 0, 'a chat line must not inject markup: ' + html);
+  assert(html.indexOf('<img') < 0, 'nor may a name: ' + html);
+  assert(html.indexOf('&lt;script&gt;') > 0, 'it should show as text instead');
+});
+
+check('an empty conversation says so rather than showing a blank box', function () {
+  var html = window.SplendorUI.chatList([]);
+  assert(html.indexOf('empty-note') > 0, html);
+});
+
+check('the chat is worded in both languages', function () {
+  var keys = ['chat.title', 'chat.placeholder', 'chat.send', 'chat.empty', 'chat.offline',
+    'chat.tooFast', 'chat.joined', 'chat.left', 'chat.renamed', 'chat.started',
+    'net.rename', 'net.renameTitle', 'net.renameBody', 'net.renameSave',
+    'net.renameEmpty', 'net.renameLocked', 'net.renameDone', 'net.nameLimit',
+    'net.renameOffline'];
+  ['vi', 'en'].forEach(function (lang) {
+    I18n.setLang(lang);
+    keys.forEach(function (key) { assert(I18n.t(key) !== key, 'missing ' + lang + ':' + key); });
+  });
+  I18n.setLang('vi');
+});
+
+check('a player cut off from the room is not told to move', function () {
+  /* The board stayed live while a guest was disconnected, so the player picked
+     gems and the move went into a closed socket. */
+  var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
+  var body = source.slice(source.indexOf('function canAct'), source.indexOf('function netBlocked'));
+  assert(/App\.role !== 'guest' \|\| !netBlocked\(\)/.test(body),
+    'canAct() must take the connection into account for a guest');
+  assert(/function netBlocked/.test(source), 'netBlocked() must exist');
+  var blocked = source.slice(source.indexOf('function netBlocked'), source.indexOf('function netBlocked') + 400);
+  assert(/!st\.connected \|\| st\.hostGone/.test(blocked),
+    'both being offline and the host being gone must block a guest');
+});
+
+check('the in-game top bar keeps room for every button', function () {
+  /* Four buttons is all a 320px bar holds, so the text has to be the part that
+     gives way — and it can only do that if the whole chain may shrink. */
+  var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
+  var rule = css.slice(css.indexOf('.topbar-right { display: flex'));
+  rule = rule.slice(0, rule.indexOf('}') + 1);
+  assert(/flex: 0 1 auto/.test(rule) && /min-width: 0/.test(rule),
+    '.topbar-right must be allowed to shrink: ' + rule);
+  var phone = css.slice(css.indexOf('@media (max-width: 700px)'));
+  assert(/\.net-chip \{ display: none; \}/.test(phone), 'the room chip steps aside on a phone');
+  assert(/\.round-chip \{ display: none; \}/.test(phone), 'so does the round number');
+});
+
+check('every way of hiding the nobles strip offers the crown instead', function () {
+  /* Sideways the strip was hidden but the button that opens it was not shown,
+     leaving no way at all to see the nobles. */
+  var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
+  var hides = (css.match(/\.nobles-panel \{ display: none; \}/g) || []).length;
+  var shows = (css.match(/#nobles-btn \{ display: grid; \}/g) || []).length;
+  assert(hides >= 2, 'expected the strip to be hidden on phones and sideways, found ' + hides);
+  assert(shows >= hides, 'the crown is shown ' + shows + ' times for ' + hides + ' hidings');
 });
 
 console.log('\nphone layout');

@@ -276,11 +276,25 @@
       hint = t('turn.hint.locked');
     }
 
-    root.className = 'turn-line' + (mine ? ' is-mine' : ' is-waiting');
+    /* Online, "your turn" is only true while the room can still hear you: a
+       player cut off from the referee would otherwise be told to move and have
+       every move silently dropped. Trouble that does not block play — the host
+       is its own referee — is said alongside the turn instead of replacing it. */
+    var blocked = !!(opts.warning && opts.blocked);
+    if (blocked) {
+      label = opts.warning;
+      hint = '';
+      mine = false;
+    } else if (opts.warning) {
+      hint = opts.warning;
+    }
+
+    root.className = 'turn-line' + (blocked ? ' is-warning' : mine ? ' is-mine' : ' is-waiting');
     root.innerHTML =
-      '<span class="turn-dot" style="background:' + colour + '"></span>' +
+      '<span class="turn-dot" style="background:' + (blocked ? 'var(--danger)' : colour) + '"></span>' +
       '<span class="turn-text">' + label + '</span>' +
-      (hint ? '<span class="turn-hint">' + hint + '</span>' : '') +
+      (hint ? '<span class="turn-hint' + (!blocked && opts.warning ? ' is-warning' : '') + '">' +
+        hint + '</span>' : '') +
       scoreStrip(state, opts.viewer);
   }
 
@@ -383,7 +397,8 @@
   function modal(html, options) {
     options = options || {};
     modalRoot = modalRoot || document.getElementById('modal-root');
-    modalRoot.innerHTML = '<div class="modal" role="dialog" aria-modal="true">' + html + '</div>';
+    modalRoot.innerHTML = '<div class="modal' + (options.className ? ' ' + options.className : '') +
+      '" role="dialog" aria-modal="true">' + html + '</div>';
     modalRoot.hidden = false;
     document.body.classList.add('has-modal');
     onCloseHandler = options.onClose || null;
@@ -603,6 +618,80 @@
       '</div>');
   }
 
+  /* --------------------------------------------------- name and chat */
+
+  function renameModal(current, limit) {
+    var node = modal(
+      '<h2 class="modal-title">' + t('net.renameTitle') + '</h2>' +
+      '<p class="modal-body">' + t('net.renameBody') + '</p>' +
+      '<form class="rename-form" id="rename-form">' +
+        '<input type="text" class="text-input" id="rename-input" maxlength="' + limit + '" ' +
+          'autocomplete="off" autocapitalize="words" spellcheck="false" ' +
+          'value="' + escapeHtml(current) + '">' +
+        '<p class="hint">' + t('net.nameLimit', { n: limit }) + '</p>' +
+        '<div class="modal-actions">' +
+          '<button type="button" class="btn btn-ghost" data-close="1">' + t('action.cancel') + '</button>' +
+          '<button type="submit" class="btn btn-primary" data-do="renameSave">' +
+            t('net.renameSave') + '</button>' +
+        '</div>' +
+      '</form>', { autofocus: false });
+    var input = document.getElementById('rename-input');
+    if (input) { input.focus(); input.select(); }
+    return node;
+  }
+
+  /* One line of chat. Everything in here was typed by somebody else's browser,
+     so every part of it is escaped on the way onto the page. */
+  function chatLine(line) {
+    if (line.system) {
+      return '<p class="chat-note">' + escapeHtml(line.text) + '</p>';
+    }
+    var colour = line.seat >= 0 ? PLAYER_COLORS[line.seat % 4] : 'var(--muted-2)';
+    return '<div class="chat-line' + (line.mine ? ' is-mine' : '') + '">' +
+      '<span class="chat-who" style="color:' + colour + '">' + escapeHtml(line.name) + '</span>' +
+      '<span class="chat-text">' + escapeHtml(line.text) + '</span>' +
+      '</div>';
+  }
+
+  function chatList(log) {
+    if (!log || !log.length) return '<p class="empty-note">' + t('chat.empty') + '</p>';
+    return log.map(chatLine).join('');
+  }
+
+  /* Draws the messages into an existing list and keeps it pinned to the newest
+     line, the way a chat is expected to behave. */
+  function renderChatList(root, log) {
+    if (!root) return;
+    root.innerHTML = chatList(log);
+    root.scrollTop = root.scrollHeight;
+  }
+
+  function chatForm(limit, enabled) {
+    return '<form class="chat-form" data-chat-form="1">' +
+      '<input type="text" class="text-input chat-input" data-chat-input="1" ' +
+        'maxlength="' + limit + '" autocomplete="off" ' +
+        'placeholder="' + escapeHtml(t('chat.placeholder')) + '"' +
+        (enabled ? '' : ' disabled') + '>' +
+      '<button type="submit" class="btn btn-primary chat-send"' + (enabled ? '' : ' disabled') +
+        '>' + t('chat.send') + '</button>' +
+      '</form>';
+  }
+
+  /* The in-game chat sheet. On a phone the board fills the screen, so talking
+     has to happen over the top of it rather than beside it. */
+  function chatModal(log, limit, enabled) {
+    var node = modal(
+      '<h2 class="modal-title">' + t('chat.title') + '</h2>' +
+      '<div class="chat-log" id="chat-log-modal"></div>' +
+      chatForm(limit, enabled) +
+      '<div class="modal-actions"><button type="button" class="btn btn-ghost" data-close="1">' +
+        t('action.cancel') + '</button></div>', { autofocus: false, className: 'is-chat' });
+    renderChatList(document.getElementById('chat-log-modal'), log);
+    var input = node.querySelector('[data-chat-input]');
+    if (input && enabled) input.focus();
+    return node;
+  }
+
   /* ------------------------------------------------------------ toasts */
 
   function toast(message, kind) {
@@ -666,6 +755,11 @@
     logModal: logModal,
     menuModal: menuModal,
     confirmModal: confirmModal,
+    renameModal: renameModal,
+    chatModal: chatModal,
+    chatForm: chatForm,
+    chatList: chatList,
+    renderChatList: renderChatList,
     modal: modal,
     closeModal: closeModal,
     isModalOpen: isModalOpen,

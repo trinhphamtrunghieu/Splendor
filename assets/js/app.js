@@ -29,6 +29,9 @@
     role: null,               // 'host' | 'guest'
     seat: -1,                 // my seat in an online game
     pending: false,           // an intent is in flight to the host
+    unread: 0,                // chat heard while the player was not looking
+    roster: null,             // last seen seats, to report a name that changed
+    roomPhase: null,          // last seen room phase, to notice the deal
     settings: {
       lang: 'vi',
       speed: 'normal',
@@ -320,11 +323,140 @@
     return (App.settings.onlineName || '').trim() || t('menu.you');
   }
 
+  function chatOpen() {
+    return $('screen-lobby').classList.contains('is-active') ||
+      !!document.getElementById('chat-log-modal');
+  }
+
+  function systemNote(text) {
+    if (App.net) App.net.note(text);
+  }
+
+  /* Who was sitting where last time the roster arrived, so a name that changes
+     can be reported as a change rather than silently replacing the old one. */
+  function rosterSnapshot(seats) {
+    return (seats || []).map(function (seat) { return seat.id + '\u0000' + seat.name; });
+  }
+
+  function announceRosterChange(seats) {
+    var before = App.roster || [];
+    var after = rosterSnapshot(seats);
+    if (before.length) {
+      var wasById = {};
+      before.forEach(function (entry) {
+        var parts = entry.split('\u0000');
+        wasById[parts[0]] = parts[1];
+      });
+      (seats || []).forEach(function (seat) {
+        var was = wasById[seat.id];
+        if (was === undefined) {
+          if (seat.type === 'human' && seat.id !== App.net.clientId) {
+            systemNote(t('chat.joined', { p: seat.name }));
+          }
+        } else if (was !== seat.name) {
+          systemNote(t('chat.renamed', { a: was, b: seat.name }));
+        }
+      });
+    }
+    App.roster = after;
+  }
+
+  function renderChat() {
+    var net = App.net;
+    var log = net ? net.chat : [];
+    if ($('screen-lobby').classList.contains('is-active')) {
+      UI.renderChatList($('lobby-chat-log'), log);
+      var canTalk = !!net && net.status().connected;
+      var form = $('lobby-chat-form');
+      /* Only rebuild the form when it has to change: the player may be
+         halfway through typing a message while the roster updates. */
+      if (form.dataset.enabled !== String(canTalk)) {
+        form.innerHTML = UI.chatForm(Net.MAX_CHAT, canTalk);
+        form.dataset.enabled = String(canTalk);
+      }
+    }
+    UI.renderChatList(document.getElementById('chat-log-modal'), log);
+    if (chatOpen()) App.unread = 0;
+    renderChatBadge();
+  }
+
+  function renderChatBadge() {
+    var button = $('chat-btn');
+    if (!button) return;
+    var on = App.mode === 'online' && !!App.net;
+    button.hidden = !on;
+    var badge = $('chat-badge');
+    if (!badge) return;
+    badge.hidden = !on || App.unread < 1;
+    badge.textContent = App.unread > 9 ? '9+' : String(App.unread);
+  }
+
+  function sendChat(input) {
+    var net = App.net;
+    if (!net || !input) return;
+    var text = input.value;
+    if (!Net.cleanChat(text)) { input.value = ''; return; }
+    if (!net.status().connected) { UI.toast(t('chat.offline'), 'error'); return; }
+    if (net.sendChat(text) === null) { UI.toast(t('chat.tooFast')); return; }
+    input.value = '';
+  }
+
+  function askRename() {
+    var net = App.net;
+    if (!net) return;
+    if (!net.canRename()) { UI.toast(t('net.renameLocked'), 'error'); return; }
+    var seat = net.mySeat();
+    UI.renameModal(seat >= 0 ? net.seats[seat].name : onlineName(), Net.MAX_NAME);
+  }
+
+  function commitRename() {
+    var net = App.net;
+    var input = document.getElementById('rename-input');
+    if (!net || !input) return;
+    var wanted = Net.cleanName(input.value);
+    if (!wanted) { UI.toast(t('net.renameEmpty'), 'error'); return; }
+    if (!net.canRename()) { UI.toast(t('net.renameLocked'), 'error'); return; }
+    /* A guest's new name has to reach the host to mean anything, so saying it
+       worked while the socket is shut would be a lie. The host owns the roster
+       and republishes it on reconnect, so it may rename itself either way. */
+    if (App.role === 'guest' && !net.status().connected) {
+      UI.toast(t('net.renameOffline'), 'error');
+      return;
+    }
+    var seat = net.mySeat();
+    if (seat >= 0 && net.seats[seat].name === wanted) {
+      UI.closeModal();
+      UI.toast(t('net.renameSame'));
+      return;
+    }
+    net.rename(wanted);
+    /* Remember it, so the next room this player joins starts from the name
+       they actually go by. */
+    App.settings.onlineName = wanted;
+    saveSettings();
+    var nameField = $('online-name');
+    if (nameField) nameField.value = wanted;
+    UI.closeModal();
+    UI.toast(t('net.renameDone', { p: wanted }), 'good');
+  }
+
   function attachNet(net) {
     App.net = net;
     App.role = net.role;
 
-    net.on('status', function () { renderLobby(); renderNetChip(); });
+    net.on('status', function () {
+      renderLobby();
+      renderNetChip();
+      renderChatBadge();
+      /* The turn line carries the connection warning, so it is stale until the
+         board is redrawn. */
+      if (App.state && $('screen-game').classList.contains('is-active')) render();
+    });
+
+    net.on('chat', function (line) {
+      if (!line.system && !line.mine && !chatOpen()) App.unread++;
+      renderChat();
+    });
 
     net.on('room', function (room) {
       if (room.closed && App.role === 'guest') {
@@ -332,6 +464,9 @@
         return;
       }
       App.seat = net.mySeat();
+      announceRosterChange(room.seats);
+      if (App.roomPhase === 'lobby' && room.phase === 'playing') systemNote(t('chat.started'));
+      App.roomPhase = room.phase;
       renderLobby();
       renderNetChip();
       // A guest with no game yet sits in the lobby until the host starts.
@@ -369,7 +504,10 @@
     net.on('seated', function () { renderLobby(); });
     net.on('left', function (info) {
       var seat = App.net.seats[info.seat];
-      if (seat) UI.toast(t('net.playerLeft', { p: seat.name }));
+      if (seat) {
+        UI.toast(t('net.playerLeft', { p: seat.name }));
+        systemNote(t('chat.left', { p: seat.name }));
+      }
       renderLobby();
     });
     net.on('rejected', function (message) {
@@ -452,6 +590,9 @@
   function leaveOnline(message) {
     if (App.net) App.net.leave();
     App.net = null;
+    App.roster = null;
+    App.roomPhase = null;
+    App.unread = 0;
     App.role = null;
     App.seat = -1;
     App.state = null;
@@ -526,6 +667,10 @@
         '<span class="seat-name">' + UI.escapeHtml(seat.name) + '</span>' +
         (tags.length ? '<span class="player-tag">' + tags.join(' · ') + '</span>' : '') +
         '<span class="seat-state">' + (seat.online ? '●' : '○') + '</span>' +
+        (seat.id === st.clientId && net.canRename()
+          ? '<button type="button" class="btn btn-sm seat-rename" data-lobby="rename">' +
+            t('net.rename') + '</button>'
+          : '') +
         (App.role === 'host' && seat.id !== st.clientId
           ? '<button type="button" class="seat-kick" data-kick="' + seat.id + '" aria-label="remove">×</button>'
           : '') +
@@ -547,6 +692,21 @@
     actions.push('<button type="button" class="btn btn-danger" data-lobby="leave">' +
       t(App.role === 'host' ? 'net.closeRoom' : 'net.leaveRoom') + '</button>');
     $('lobby-actions').innerHTML = actions.join('');
+    renderChat();
+  }
+
+  /* What is wrong with the connection right now, in words, or null when the
+     room can hear us. The turn line carries it, because a player who cannot
+     reach the room cannot take their turn either. */
+  function netWarning() {
+    if (App.mode !== 'online' || !App.net) return null;
+    var st = App.net.status();
+    if (!st.connected) {
+      var retry = /^reconnect-(\d+)$/.exec(st.notice || '');
+      return retry ? t('net.reconnecting', { n: retry[1] }) : t('net.connecting');
+    }
+    if (st.hostGone) return t('net.err.hostGone');
+    return null;
   }
 
   function renderNetChip() {
@@ -557,9 +717,12 @@
     chip.hidden = false;
     var healthy = st.connected && !st.hostGone;
     chip.className = 'net-chip ' + (healthy ? 'is-on' : 'is-off');
-    chip.textContent = st.room + (st.connected
-      ? (st.hostGone ? ' · ' + t('net.hostGoneShort') : '')
-      : ' · ' + t('net.offline'));
+    /* When all is well the chip is just the room code, which a phone hides to
+       leave room for the buttons. When something is wrong the warning is what
+       matters, so the code steps aside for it. */
+    chip.textContent = !st.connected ? t('net.offline')
+      : st.hostGone ? t('net.hostGoneShort')
+      : st.room;
   }
 
   /* ---------------------------------------------------------- drawing */
@@ -595,7 +758,9 @@
       canAct: myTurn,
       viewer: viewer,
       /* Hot seat: say the name, since the device is passed around. */
-      namedTurn: App.mode === 'multi' && humanCount(state) > 1
+      namedTurn: App.mode === 'multi' && humanCount(state) > 1,
+      warning: netWarning(),
+      blocked: netBlocked()
     });
     UI.renderPlayers($('players'), state, {
       revealIndex: App.mode === 'online' ? viewer : (isHumanTurn ? state.current : -1),
@@ -603,6 +768,7 @@
     });
     UI.renderTray($('tray'), state, App.picked, isHumanTurn, viewer);
     $('take-hint').textContent = t('action.takeHint');
+    renderChatBadge();
 
     // Card nodes are replaced on every draw, so the coach marks have to be
     // re-anchored here rather than only when a turn ends.
@@ -708,9 +874,22 @@
     var state = App.state;
     if (!state || state.phase === 'gameover') return false;
     if (App.mode === 'online') {
-      return App.seat >= 0 && state.current === App.seat && !App.pending;
+      if (App.seat < 0 || state.current !== App.seat || App.pending) return false;
+      /* A guest plays by asking the host, so a guest that cannot reach the
+         room cannot move: without this the board stays live, the player picks
+         gems, and the move is dropped into a closed socket. The host is the
+         referee and applies its own moves locally, so it plays on and the
+         others catch up when it reconnects. */
+      return App.role !== 'guest' || !netBlocked();
     }
     return E.currentPlayer(state).type === 'human';
+  }
+
+  /* True when this player's moves cannot reach the referee. */
+  function netBlocked() {
+    if (App.mode !== 'online' || !App.net || App.role !== 'guest') return false;
+    var st = App.net.status();
+    return !st.connected || st.hostGone;
   }
 
   /* Every move the local player makes goes through here: applied directly when
@@ -882,7 +1061,9 @@
       }
       var action = event.target.closest('[data-lobby]');
       if (!action || action.disabled) return;
-      if (action.dataset.lobby === 'bot') {
+      if (action.dataset.lobby === 'rename') {
+        askRename();
+      } else if (action.dataset.lobby === 'bot') {
         App.net.addBot(t('menu.bot', { n: App.net.seats.length }), App.settings.difficulty);
         renderLobby();
       } else if (action.dataset.lobby === 'start') {
@@ -904,6 +1085,15 @@
       }
     });
 
+    /* The chat form is rebuilt whenever the lobby redraws, so the listener
+       goes on the screen rather than on the form itself. */
+    $('screen-lobby').addEventListener('submit', function (event) {
+      var form = event.target.closest('[data-chat-form]');
+      if (!form) return;
+      event.preventDefault();
+      sendChat(form.querySelector('[data-chat-input]'));
+    });
+
     $('tutorial-btn').addEventListener('click', function () { startTutorial(); });
   }
 
@@ -917,6 +1107,7 @@
       if (UI.isModalOpen()) return;
       if (event.target.closest('#menu-btn')) { UI.menuModal(state); return; }
       if (event.target.closest('#nobles-btn')) { UI.noblesModal(state, viewerSeat()); return; }
+      if (event.target.closest('#chat-btn')) { openChat(); return; }
       if (event.target.closest('#log-btn')) { UI.logModal(state); return; }
 
       var sheet = event.target.closest('[data-sheet]');
@@ -966,6 +1157,14 @@
   function openSheet(name) {
     if (name === 'nobles') UI.noblesModal(App.state, viewerSeat());
     else UI.playersModal(App.state, viewerSeat());
+  }
+
+  function openChat() {
+    var net = App.net;
+    if (!net) return;
+    UI.chatModal(net.chat, Net.MAX_CHAT, net.status().connected);
+    App.unread = 0;
+    renderChatBadge();
   }
 
   function wireModal() {
@@ -1029,6 +1228,10 @@
           UI.closeModal();
           step();
           break;
+        case 'renameSave':
+          /* The form's submit handler does this, so that Enter in the field
+             and a tap on the button take exactly the same path. */
+          break;
         case 'rules':
           UI.rulesModal();
           break;
@@ -1068,6 +1271,16 @@
       }
     });
 
+    /* Both dialogs that contain a form live here. Submitting is what Enter in
+       a text field does, so it is the one path worth wiring. */
+    root.addEventListener('submit', function (event) {
+      var form = event.target.closest('form');
+      if (!form) return;
+      event.preventDefault();
+      if (form.id === 'rename-form') { commitRename(); return; }
+      if (form.dataset.chatForm) sendChat(form.querySelector('[data-chat-input]'));
+    });
+
     document.addEventListener('keydown', function (event) {
       if (event.key === 'Escape' && UI.isModalOpen() && root.dataset.dismissable !== 'no') dismiss();
     });
@@ -1088,6 +1301,9 @@
     if (!App.settings.names.multi) App.settings.names.multi = [];
     if (!App.settings.count || typeof App.settings.count !== 'object') App.settings.count = { single: 2, multi: 2 };
     I18n.setLang(App.settings.lang || 'vi');
+
+    var nameField = $('online-name');
+    if (nameField) nameField.maxLength = Net.MAX_NAME;
 
     wireMenu();
     wireGame();

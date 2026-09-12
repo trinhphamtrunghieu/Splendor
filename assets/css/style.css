@@ -239,6 +239,76 @@ h1, h2, h3, p { margin: 0; }
 .menu-extra { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
 .credit { text-align: center; color: var(--muted-2); font-size: .74rem; line-height: 1.6; }
 
+/* ──────────────────────────── names and chat ──────────────────────────── */
+
+.text-input {
+  width: 100%;
+  background: var(--bg); border: 1px solid var(--line); color: var(--text);
+  border-radius: 10px; padding: 11px 12px; min-height: var(--tap);
+  font-size: .95rem;
+}
+.rename-form { display: flex; flex-direction: column; gap: 8px; }
+.seat-rename { flex: 0 0 auto; padding: 5px 10px; min-height: 32px; font-size: .76rem; }
+
+/* A chat has to be scrollable without the page growing, so it owns a height of
+   its own and the newest line is what you land on. */
+.chat-panel { display: flex; flex-direction: column; gap: 9px; min-height: 0; }
+.chat-log {
+  display: flex; flex-direction: column; gap: 6px;
+  height: 168px; overflow-y: auto; overscroll-behavior: contain;
+  padding: 9px; border-radius: var(--radius-sm);
+  background: var(--bg); border: 1px solid var(--line);
+  -webkit-overflow-scrolling: touch;
+}
+.chat-line {
+  display: flex; flex-direction: column; gap: 1px;
+  max-width: 86%; padding: 6px 9px; border-radius: 10px;
+  background: var(--surface-2); border: 1px solid var(--line);
+  align-self: flex-start;
+}
+.chat-line.is-mine {
+  align-self: flex-end;
+  background: rgba(124, 92, 255, .17);
+  border-color: rgba(176, 124, 255, .4);
+}
+.chat-who { font-size: .68rem; font-weight: 800; letter-spacing: .04em; }
+.chat-text { font-size: .86rem; line-height: 1.4; overflow-wrap: anywhere; }
+.chat-note {
+  align-self: center; text-align: center;
+  font-size: .72rem; color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+.chat-form { display: flex; gap: 8px; }
+
+/* In the sheet the conversation is the only part that may give up space: a
+   dialog is a flex column, and without this the field and buttons are the
+   first things squashed to nothing when the screen is short. */
+.modal.is-chat { max-height: min(620px, calc(100dvh - 32px)); }
+.modal.is-chat > .modal-title,
+.modal.is-chat > .chat-form,
+.modal.is-chat > .modal-actions { flex: 0 0 auto; }
+/* The conversation grows the sheet until it hits the cap, then scrolls inside
+   it: a two-line chat is a small sheet, not a screen of empty box. */
+.modal.is-chat > .chat-log {
+  flex: 1 1 auto;
+  height: auto; min-height: 112px; max-height: none;
+}
+.chat-input { flex: 1 1 auto; min-width: 0; }
+.chat-send { flex: 0 0 auto; }
+.chat-log .empty-note { align-self: center; margin: auto 0; text-align: center; }
+
+/* The unread count on the in-game chat button. */
+#chat-btn { position: relative; }
+#chat-btn .badge {
+  position: absolute; top: -4px; right: -4px;
+  min-width: 17px; height: 17px; padding: 0 4px;
+  display: grid; place-items: center;
+  border-radius: 999px;
+  background: var(--danger); color: #fff;
+  font-size: .62rem; font-weight: 800; line-height: 1;
+  border: 1px solid var(--surface-1);
+}
+
 /* ───────────────────────────── online lobby ───────────────────────────── */
 
 .mode-card--wide { grid-column: 1 / -1; }
@@ -351,11 +421,26 @@ h1, h2, h3, p { margin: 0; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .turn-name .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; vertical-align: 1px; }
-.topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+/* The bar carries the most in an online game: menu, round, whose turn, the room
+   code, the final-round warning and four buttons. The buttons are the only part
+   a player taps, so the text is what gives way when it will not all fit. This
+   has to allow shrinking (flex-shrink 1, min-width 0) all the way down, or the
+   chips keep their full width and shove the buttons off the side of a narrow
+   screen instead. */
+.topbar-right { display: flex; align-items: center; gap: 8px; flex: 0 1 auto; min-width: 0; }
+.topbar-right .net-chip, .topbar-right .final-chip {
+  min-width: 0; flex: 0 1 auto;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.topbar-right .icon-btn { flex: 0 0 auto; }
 /* On a phone the nobles are a compact strip — or, on a short screen, not shown
    at all — so they need a way in that is always there. */
+/* The crown button is the way to the nobles whenever the strip itself has been
+   taken off the board — which happens on phones and, sideways, on wider ones
+   too. Every rule that hides .nobles-panel must show this. */
 #nobles-btn { display: none; }
 @media (max-width: 700px) { #nobles-btn { display: grid; } }
+@media (orientation: landscape) and (max-height: 560px) { #nobles-btn { display: grid; } }
 .final-chip {
   font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em;
   background: linear-gradient(140deg, #f0c45c, #c08f22); color: #2a1f05;
@@ -729,6 +814,10 @@ h1, h2, h3, p { margin: 0; }
 }
 .turn-line.is-waiting { background: var(--surface); }
 .turn-line.is-over { background: linear-gradient(90deg, rgba(232, 182, 76, .18), transparent); }
+.turn-line.is-warning {
+  background: linear-gradient(90deg, rgba(224, 85, 107, .18), rgba(224, 85, 107, .04) 60%, transparent);
+  border-top-color: rgba(224, 85, 107, .5);
+}
 
 .turn-dot { width: 10px; height: 10px; border-radius: 50%; flex: 0 0 auto; }
 .turn-line.is-waiting .turn-dot { animation: turn-pulse 1.6s ease-in-out infinite; }
@@ -737,6 +826,8 @@ h1, h2, h3, p { margin: 0; }
 .turn-text { font-weight: 750; }
 .turn-line.is-mine .turn-text { color: var(--ok); }
 .turn-line.is-waiting .turn-text { color: var(--text); }
+.turn-line.is-warning .turn-text { color: var(--danger); }
+.turn-hint.is-warning { color: var(--danger); }
 .turn-line.is-over .turn-text { color: var(--gold); }
 .turn-hint { color: var(--muted-2); font-size: .76rem; }
 
@@ -1107,7 +1198,25 @@ img.gem-photo { object-fit: cover; border-radius: 50%; }
   .topbar { padding: 5px 8px; padding-top: calc(5px + env(safe-area-inset-top)); gap: 7px; }
   .icon-btn { width: 40px; height: 40px; border-radius: 10px; }
   .round-chip { font-size: .64rem; padding: 3px 7px; }
-  .turn-name { font-size: .86rem; }
+  /* The turn line above the tray says whose turn it is in full, so the bar does
+     not need to repeat it — and the room in the bar is needed for the buttons. */
+  .turn-name { display: none; }
+  /* Four buttons is all a 320px bar can hold. The room code lives in the lobby
+     and nobody can join mid-game anyway; the connection warning has moved to
+     the turn line, which has room for it and is where a player looks to see
+     whether they can move; and the round number is not something anyone acts
+     on. The final-round warning is the one chip that stays. */
+  .net-chip { display: none; }
+  .round-chip { display: none; }
+
+  /* The lobby is a scrolling page on a phone, so the chat can have its own
+     share of the screen rather than a fixed box. */
+  .chat-log { height: min(40vh, 220px); }
+  .chat-line { max-width: 92%; }
+  /* Inside the in-game sheet the chat takes whatever the title, field and
+     buttons leave, so a short screen shrinks the conversation and nothing else. */
+  .modal.is-chat { max-height: calc(100dvh - 24px); }
+  .chat-send { padding: 8px 12px; min-height: 40px; font-size: .86rem; }
 }
 
 @media (max-width: 700px) and (max-height: 620px) {
