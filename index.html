@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#15121f">
-<meta name="description" content="Splendor — board game đá quý thời Phục hưng, chơi một người với máy, nhiều người trên cùng thiết bị hoặc trực tuyến qua mạng.">
+<meta name="description" content="Splendor — board game đá quý thời Phục hưng, chơi một người với máy hoặc nhiều người trên cùng thiết bị. Chạy trực tiếp trong trình duyệt.">
 <title>Splendor</title>
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -54,8 +54,15 @@
       <div class="field">
         <span class="field-label" data-i18n="net.yourName"></span>
         <div class="name-row">
-          <input type="text" id="online-name" maxlength="16" autocomplete="nickname">
+          <input type="text" id="online-name" maxlength="14" autocomplete="nickname">
         </div>
+      </div>
+
+      <div class="field">
+        <span class="field-label" data-i18n="net.broker"></span>
+        <div class="seg" id="broker-seg" role="group"></div>
+        <input type="text" id="broker-url" class="broker-url" spellcheck="false" autocomplete="off">
+        <p class="hint" data-i18n="net.broker.hint"></p>
       </div>
 
       <div class="online-actions">
@@ -216,6 +223,7 @@
 <script src="assets/js/i18n.js"></script>
 <script src="assets/js/engine.js"></script>
 <script src="assets/js/ai.js"></script>
+<script src="assets/js/mqtt-lite.js"></script>
 <script src="assets/js/net.js"></script>
 <script src="assets/js/ui.js"></script>
 <script src="assets/js/tutorial.js"></script>

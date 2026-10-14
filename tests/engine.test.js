@@ -1,4 +1,4 @@
-/* Splendor — rules & unit tests. No dependencies: run with `node tests/engine.test.js`.
+/* Splendor — rules tests. No dependencies: run with `node tests/engine.test.js`.
  * The browser modules attach to `window`, so we provide one. */
 'use strict';
 
@@ -9,9 +9,9 @@ require('../assets/js/ai.js');
 require('../assets/js/tutorial.js');
 require('../assets/js/art.js');
 require('../assets/js/i18n.js');
+require('../assets/js/mqtt-lite.js');
 require('../assets/js/net.js');
 require('../assets/js/ui.js');        // the rendering helpers are pure strings
-var roomApi = require('../api/room.js');
 var fetchArt = require('../tools/fetch-art.js');
 
 var D = window.SplendorData;
@@ -19,6 +19,7 @@ var E = window.SplendorEngine;
 var AI = window.SplendorAI;
 var Tut = window.SplendorTutorial;
 var Art = window.SplendorArt;
+var M = window.MqttLite;
 var I18n = window.SplendorI18n;
 var Net = window.SplendorNet;
 
@@ -137,7 +138,7 @@ check('three different gems is legal', function () {
 });
 
 check('two of the same colour needs four in the pile', function () {
-  var state = game(2);
+  var state = game(2);                       // 2 players start with 4 of each
   assert(E.takeTokens(state, ['red', 'red']).ok, 'pair with 4 left should pass');
   eq(state.tokens.red, 2);
   var second = E.takeTokens(state, ['red', 'red']);
@@ -237,7 +238,7 @@ check('gold substitutes for any missing gem', function () {
   var state = game(2);
   state.board[1][0] = { id: 'x3', tier: 1, bonus: 'green', points: 0, cost: { black: 2, red: 1 } };
   var player = state.players[0];
-  state.tokens.gold -= 2;
+  state.tokens.gold -= 2;                    // the two golds came from the bank
   player.tokens.gold = 2;
   player.tokens.red = 1;
   var payment = E.paymentFor(player, state.board[1][0]);
@@ -270,7 +271,7 @@ console.log('\nend of turn');
 check('holding more than ten tokens forces a return', function () {
   var state = game(4);
   var player = state.players[0];
-  D.COLORS.forEach(function (c) { player.tokens[c] = 2; });
+  D.COLORS.forEach(function (c) { player.tokens[c] = 2; });   // 10 already
   var result = E.takeTokens(state, ['white', 'blue', 'green']);
   eq(result.needs, 'discard');
   eq(state.phase, 'discard');
@@ -367,12 +368,12 @@ check('a fully blocked player may pass, but only then', function () {
   var state = game(2);
   eq(E.passTurn(state).error, 'err.mustAct', 'passing is refused while moves exist');
 
-  D.COLORS.forEach(function (c) { state.tokens[c] = 0; });
+  D.COLORS.forEach(function (c) { state.tokens[c] = 0; });   // bank drained
   state.tokens.gold = 0;
   var pricey = { id: 'xp', tier: 3, bonus: 'red', points: 5, cost: { white: 7 } };
-  state.players[0].reserved = [pricey, pricey, pricey];
+  state.players[0].reserved = [pricey, pricey, pricey];      // no room to reserve
   [1, 2, 3].forEach(function (tier) {
-    state.board[tier] = [pricey, pricey, pricey, pricey];
+    state.board[tier] = [pricey, pricey, pricey, pricey];    // nothing affordable
   });
   eq(E.legalActions(state), [{ type: 'pass' }]);
   assert(E.passTurn(state).ok, 'the blocked player can pass');
@@ -405,6 +406,9 @@ check('legalActions never offers an unaffordable purchase', function () {
 console.log('\nscreen switching');
 
 check('every screen change goes through the one helper', function () {
+  /* The lobby once stayed visible underneath a running game because enterGame
+     switched classes by hand and forgot it. A browser test caught that; this
+     one keeps the shortcut from coming back without needing a browser. */
   var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
   var adHoc = source.match(/classList\.(add|remove|toggle)\(\s*'is-active'/g) || [];
   var inHelper = source.slice(source.indexOf('function showScreen'), source.indexOf('function showScreen') + 400)
@@ -420,8 +424,8 @@ check('the turn line exists and is worded in both languages', function () {
   assert(/id="turn-line"[^>]*aria-live/.test(html),
     'the turn line changes without a click, so it must be announced');
 
-  var keys = ['turn.yours', 'turn.yoursNamed', 'turn.waiting', 'turn.waitingOffline',
-    'turn.thinking', 'turn.discarding', 'turn.choosingNoble', 'turn.over',
+  var keys = ['turn.yours', 'turn.yoursNamed', 'turn.waiting', 'turn.thinking',
+    'turn.discarding', 'turn.choosingNoble', 'turn.over',
     'turn.hint.play', 'turn.hint.discard', 'turn.hint.noble', 'turn.hint.locked'];
   ['vi', 'en'].forEach(function (lang) {
     I18n.setLang(lang);
@@ -444,6 +448,7 @@ console.log('\nnames and chat');
 
 check('a name and a chat line are both cut down to something safe', function () {
   var Net = window.SplendorNet;
+  /* Both arrive from other people's browsers. */
   eq(Net.cleanName('  Nguyễn   Văn   A  '), 'Nguyễn Văn A');
   eq(Net.cleanName('a'.repeat(80)).length, Net.MAX_NAME);
   eq(Net.cleanName('   '), '');
@@ -456,6 +461,8 @@ check('a name and a chat line are both cut down to something safe', function () 
 });
 
 check('the name field cannot accept more than a name may hold', function () {
+  /* The field and the protocol have to agree, or the player types a name that
+     is silently trimmed the moment it is sent. */
   var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
   assert(/nameField\.maxLength = Net\.MAX_NAME/.test(source),
     'app.js must set the field length from the protocol limit');
@@ -487,13 +494,12 @@ check('an empty conversation says so rather than showing a blank box', function 
   assert(html.indexOf('empty-note') > 0, html);
 });
 
-check('the chat and online notices are worded in both languages', function () {
+check('the chat is worded in both languages', function () {
   var keys = ['chat.title', 'chat.placeholder', 'chat.send', 'chat.empty', 'chat.offline',
-    'chat.tooFast', 'chat.joined', 'chat.rejoined', 'chat.left', 'chat.hostChanged',
-    'chat.botTakeover', 'chat.renamed', 'chat.started',
+    'chat.tooFast', 'chat.joined', 'chat.left', 'chat.renamed', 'chat.started',
     'net.rename', 'net.renameTitle', 'net.renameBody', 'net.renameSave',
     'net.renameEmpty', 'net.renameLocked', 'net.renameDone', 'net.nameLimit',
-    'net.renameOffline', 'net.botTakeover', 'net.youAreHost', 'net.err.serverUnreachable'];
+    'net.renameOffline'];
   ['vi', 'en'].forEach(function (lang) {
     I18n.setLang(lang);
     keys.forEach(function (key) { assert(I18n.t(key) !== key, 'missing ' + lang + ':' + key); });
@@ -501,18 +507,22 @@ check('the chat and online notices are worded in both languages', function () {
   I18n.setLang('vi');
 });
 
-check('a player cut off from the server is not told to move', function () {
+check('a player cut off from the room is not told to move', function () {
+  /* The board stayed live while a guest was disconnected, so the player picked
+     gems and the move went into a closed socket. */
   var source = require('fs').readFileSync(__dirname + '/../assets/js/app.js', 'utf8');
   var body = source.slice(source.indexOf('function canAct'), source.indexOf('function netBlocked'));
-  assert(/!netBlocked\(\)/.test(body),
-    'canAct() must take the connection into account');
+  assert(/App\.role !== 'guest' \|\| !netBlocked\(\)/.test(body),
+    'canAct() must take the connection into account for a guest');
   assert(/function netBlocked/.test(source), 'netBlocked() must exist');
-  var blocked = source.slice(source.indexOf('function netBlocked'), source.indexOf('function netBlocked') + 300);
-  assert(/!st\.connected/.test(blocked),
-    'being offline must block an online player');
+  var blocked = source.slice(source.indexOf('function netBlocked'), source.indexOf('function netBlocked') + 400);
+  assert(/!st\.connected \|\| st\.hostGone/.test(blocked),
+    'both being offline and the host being gone must block a guest');
 });
 
 check('the in-game top bar keeps room for every button', function () {
+  /* Four buttons is all a 320px bar holds, so the text has to be the part that
+     gives way — and it can only do that if the whole chain may shrink. */
   var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
   var rule = css.slice(css.indexOf('.topbar-right { display: flex'));
   rule = rule.slice(0, rule.indexOf('}') + 1);
@@ -524,6 +534,8 @@ check('the in-game top bar keeps room for every button', function () {
 });
 
 check('every way of hiding the nobles strip offers the crown instead', function () {
+  /* Sideways the strip was hidden but the button that opens it was not shown,
+     leaving no way at all to see the nobles. */
   var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
   var hides = (css.match(/\.nobles-panel \{ display: none; \}/g) || []).length;
   var shows = (css.match(/#nobles-btn \{ display: grid; \}/g) || []).length;
@@ -534,6 +546,9 @@ check('every way of hiding the nobles strip offers the crown instead', function 
 console.log('\nphone layout');
 
 check('the phone board is built from tracks that can actually shrink', function () {
+  /* A plain 1fr is minmax(auto, 1fr): the card rows refused to shrink below
+     their content and pushed the third tier off the screen. Definite heights
+     need minmax(0, 1fr) the whole way down the chain. */
   var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
   var phone = css.slice(css.indexOf('@media (max-width: 700px)'));
   eq(/grid-template-rows:\s*repeat\(3,\s*minmax\(0,\s*1fr\)\)/.test(phone), true,
@@ -543,6 +558,8 @@ check('the phone board is built from tracks that can actually shrink', function 
 });
 
 check('everything hidden on a phone has a way back', function () {
+  /* The players panel and the nobles strip come off the phone board to make
+     room. Each must be reachable by a tap instead of simply being gone. */
   var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
   var html = require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
   var ui = require('fs').readFileSync(__dirname + '/../assets/js/ui.js', 'utf8');
@@ -556,6 +573,8 @@ check('everything hidden on a phone has a way back', function () {
 });
 
 check('a message arriving while a sheet is open goes inside it', function () {
+  /* A dialog fills a phone screen, so a floating toast landed on top of the
+     very text it was commenting on. */
   var ui = require('fs').readFileSync(__dirname + '/../assets/js/ui.js', 'utf8');
   var css = require('fs').readFileSync(__dirname + '/../assets/css/style.css', 'utf8');
   var body = ui.slice(ui.indexOf('function toast('), ui.indexOf('function modalNotice('));
@@ -567,7 +586,53 @@ check('a message arriving while a sheet is open goes inside it', function () {
     'the old move-the-toast-aside rule cannot fit a dialog that fills the screen');
 });
 
-console.log('\nonline rooms & Vercel server referee');
+console.log('\nMQTT wire format');
+
+check('remaining-length varints round-trip across every byte boundary', function () {
+  [[0, 1], [1, 1], [127, 1], [128, 2], [16383, 2], [16384, 3], [2097151, 3], [2097152, 4]]
+    .forEach(function (pair) {
+      var encoded = M._codec.encodeLength(pair[0]);
+      eq(encoded.length, pair[1], 'byte count for ' + pair[0]);
+      var decoded = M._codec.decodeLength(Uint8Array.from([0].concat(encoded)), 1);
+      eq(decoded.value, pair[0], 'decoded ' + pair[0]);
+      eq(decoded.length, pair[1]);
+    });
+});
+
+check('an incomplete varint reports "not yet", not a wrong answer', function () {
+  eq(M._codec.decodeLength(Uint8Array.from([0x30, 0x80]), 1), null);
+});
+
+check('utf-8 survives the wire, including Vietnamese and emoji', function () {
+  var text = 'Hiếu — Lượt của bạn 💎';
+  eq(M._codec.fromUtf8(Uint8Array.from(M._codec.utf8(text))), text);
+});
+
+check('a string is length-prefixed with its byte count, not its character count', function () {
+  var encoded = M._codec.encodeString('đá');      // 2 characters, 4 bytes
+  eq([encoded[0], encoded[1]], [0, 4]);
+  eq(encoded.length, 6);
+});
+
+check('the fixed header carries the type, flags and length', function () {
+  var bytes = M._codec.packet(3, 1, [1, 2, 3]);   // PUBLISH, retain
+  eq(bytes[0], 0x31);
+  eq(bytes[1], 3);
+  eq(bytes.length, 5);
+});
+
+check('topic filters match the way MQTT says they should', function () {
+  assert(M.matches('a/b/c', 'a/b/c'), 'exact');
+  assert(M.matches('a/+/c', 'a/b/c'), 'single level');
+  assert(M.matches('a/#', 'a/b/c'), 'multi level');
+  assert(M.matches('#', 'a/b'), 'bare hash');
+  assert(!M.matches('a/+', 'a/b/c'), '+ is one level only');
+  assert(!M.matches('a/b', 'a/b/c'), 'longer topic');
+  assert(!M.matches('a/b/c', 'a/b'), 'shorter topic');
+  assert(!M.matches('x/#', 'a/b'), 'different root');
+});
+
+console.log('\nonline rooms');
 
 check('room codes avoid the characters people mistype', function () {
   for (var i = 0; i < 200; i++) {
@@ -585,6 +650,11 @@ check('codes are read leniently and validated strictly', function () {
   assert(!Net.isValidCode('ABC2'), 'too short');
   assert(!Net.isValidCode('ABCIO'), 'contains excluded letters');
   assert(!Net.isValidCode(''), 'empty');
+});
+
+check('topics are namespaced per room', function () {
+  eq(Net.topic('ABC23', 'state'), 'splendor/v1/ABC23/state');
+  eq(Net.topic('ABC23', 'view/p-1'), 'splendor/v1/ABC23/view/p-1');
 });
 
 check("a player's view hides what the rules say is secret", function () {
@@ -605,6 +675,7 @@ check("a player's view hides what the rules say is secret", function () {
   eq(view.players[0].reserved.length, 1, 'the count of a rival hand is public');
   eq(view.players[0].reserved[0], { hidden: true }, 'but not what it is');
 
+  // everything Splendor plays face up must survive
   eq(view.tokens, state.tokens, 'bank');
   eq(view.board, state.board, 'cards on the table');
   eq(view.nobles, state.nobles, 'nobles');
@@ -631,22 +702,18 @@ check('every action the network can relay is understood by the engine', function
   eq(E.applyAction(state, { type: 'reserveDeck', tier: 2 }).ok, true);
   state.current = 0;
   eq(E.applyAction(state, { type: 'nonsense' }).error, 'err.generic', 'unknown types are refused');
+  // the two phase actions the protocol also has to carry
   eq(E.applyAction(state, { type: 'discard', pile: { white: 1 } }).error, 'err.nothingToReturn');
   eq(E.applyAction(state, { type: 'noble', nobleId: 'n1' }).error, 'err.noNoble');
 });
 
-check('the online setup panel uses the Vercel API and shows no MQTT broker selector', function () {
-  var html = require('fs').readFileSync(__dirname + '/../index.html', 'utf8');
-  assert(html.indexOf('id="broker-url"') < 0, 'MQTT broker input must be gone from index.html');
-  assert(html.indexOf('mqtt-lite.js') < 0, 'mqtt-lite.js must not be loaded in index.html');
-  eq(Net.DEFAULT_API, '/api/room');
+check('the default brokers are all wss, or an https page could not use them', function () {
+  assert(Net.BROKERS.length >= 1, 'at least one broker');
+  Net.BROKERS.forEach(function (broker) {
+    assert(/^wss:\/\//.test(broker.url), broker.id + ' must be wss: ' + broker.url);
+    assert(broker.label && broker.id, 'broker needs a label and id');
+  });
   eq(Net.MAX_SEATS, 4, 'Splendor seats at most four');
-});
-
-check('vercel.json configures the serverless function', function () {
-  var cfg = JSON.parse(require('fs').readFileSync(__dirname + '/../vercel.json', 'utf8'));
-  assert(cfg.functions && cfg.functions['api/room.js'], 'api/room.js must be configured in vercel.json');
-  assert(typeof roomApi === 'function', 'api/room.js must export a Vercel handler function');
 });
 
 console.log('\nartwork');
@@ -730,6 +797,7 @@ check('every image the manifest claims is installed really is', function () {
   var manifest = {};
   new Function('window', fs.readFileSync(path.join(root, 'assets/img/manifest.js'), 'utf8'))(manifest);
   var images = manifest.SplendorImages;
+
   var validKeys = {
     gems: D.ALL_TOKENS,
     cards: D.ALL_TOKENS,
@@ -757,6 +825,8 @@ check('installed images are small enough to serve from a static page', function 
   var images = manifest.SplendorImages;
   var total = 0;
 
+  // A noble tile is 104px wide, a gem token 52px: a file far beyond that is
+  // bandwidth spent on pixels nobody sees, which matters most on a phone.
   var caps = { gems: 60, cards: 120, nobles: 120 };
   ['gems', 'cards', 'nobles'].forEach(function (group) {
     Object.keys(images[group]).forEach(function (key) {
@@ -780,6 +850,9 @@ check('attribution keeps the credits and the do-not-add warning', function () {
 });
 
 check('a rendered book page is not mistaken for a gemstone', function () {
+  /* These are the actual files the first version of the script downloaded and
+     used as gems. A PDF's first page comes back from Commons as a valid JPEG
+     thumbnail, so "not an svg" was not nearly enough of a check. */
   var realMistakes = [
     { title: 'File:Schedule of gem-stones .. (IA scheduleofgemsto00glas).pdf', mime: 'application/pdf', width: 500, height: 710 },
     { title: 'File:The cabinet of gems ; or, vocabulary of precious stones.pdf', mime: 'application/pdf', width: 500, height: 762 },
@@ -789,6 +862,7 @@ check('a rendered book page is not mistaken for a gemstone', function () {
     assert(!fetchArt.looksLikeAPhotograph(file), 'should have been refused: ' + file.title);
   });
 
+  /* Same pages, but claiming to be jpegs: the title and shape still give them away. */
   assert(!fetchArt.looksLikeAPhotograph(
     { title: 'File:Gem book cover page.jpg', mime: 'image/jpeg', width: 500, height: 710 }),
     'a title that says "book cover page" is not a gem');
@@ -802,6 +876,7 @@ check('a rendered book page is not mistaken for a gemstone', function () {
     { title: 'File:Diamond diagram.svg', mime: 'image/svg+xml', width: 500, height: 500 }),
     'vector diagrams are not photographs');
 
+  /* And the real gem photographs must still pass. */
   [
     { title: 'File:1 dukát 1881 obverse.jpg', mime: 'image/jpeg', width: 394, height: 390 },
     { title: 'File:Ruby cabochon 2.jpg', mime: 'image/jpeg', width: 800, height: 600 },
@@ -861,6 +936,10 @@ check('argument parsing defaults to fetching both groups', function () {
 });
 
 console.log('\ntutorial walkthrough');
+
+/* The tutorial tells the player exactly which gems to take and which cards to
+   buy and reserve. If the card data ever shifts, these assertions fail instead
+   of the instructions quietly becoming wrong. */
 
 check('the scripted board puts the named cards where the coach marks point', function () {
   var state = Tut.buildState('Learner');
@@ -935,6 +1014,8 @@ check('every step either waits for a move or advances on a button', function () 
 
 console.log('\nself-play (engine + AI invariants)');
 
+/* Each game is a few thousand evaluated positions, so the default stays small
+   enough for CI. Raise it for a deeper soak: SPLENDOR_GAMES=500 node tests/... */
 var SELF_PLAY_GAMES = Number(process.env.SPLENDOR_GAMES || 60);
 
 check(SELF_PLAY_GAMES + ' bot games end cleanly with conserved tokens and points', function () {
