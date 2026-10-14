@@ -157,11 +157,21 @@
   }
 
   function renderPlayers(root, state, options) {
+    options = options || {};
+    var seats = options.seats || [];
+    var hostId = options.hostId || null;
     var best = Math.max.apply(null, state.players.map(function (p) { return p.points; }));
     root.innerHTML = state.players.map(function (player, index) {
       var isCurrent = index === state.current && state.phase !== 'gameover';
-      var tag = player.type === 'ai' ? t('game.ai') + ' · ' + t('menu.difficulty.' + player.difficulty)
-        : (options.youIndex === index && player.name !== t('menu.you') ? t('game.you') : '');
+      var seatInfo = seats[index];
+      var tags = [];
+      if (options.youIndex === index && player.name !== t('menu.you')) tags.push(t('game.you'));
+      if (seatInfo && hostId && seatInfo.id === hostId) tags.push(t('net.host'));
+      if (seatInfo && seatInfo.botTakeover) tags.push(t('net.botPlaying'));
+      else if (player.type === 'ai') tags.push(t('game.ai') + ' · ' + t('menu.difficulty.' + player.difficulty));
+      if (seatInfo && !seatInfo.online && !seatInfo.botTakeover && player.type === 'human') tags.push(t('net.offline'));
+
+      var tag = tags.join(' · ');
       // Reserved cards are secret in Splendor: only the player at the device sees theirs.
       var reserved = options.revealIndex === index
         ? player.reserved.map(function (c) { return cardMarkup(c, player, { mini: true, noAction: true }); }).join('')
@@ -188,7 +198,8 @@
 
   /* `viewer` is whose tray this is — the local player online, the player at the
      device otherwise. It is not always the player whose turn it is. */
-  function renderTray(root, state, picked, interactive, viewer) {
+  function renderTray(root, state, picked, interactive, viewer, extra) {
+    extra = extra || {};
     var seat = viewer == null ? state.current : viewer;
     var player = state.players[seat];
     var pickCount = picked.length;
@@ -201,8 +212,6 @@
         }).join('')
       : '<span class="empty-note">' + t('game.noReserved') + '</span>';
 
-    /* Only the groups that have something in them: three columns of "—" is
-       noise, and on a phone it is noise that costs the board real height. */
     var held = E.countTokens(player.tokens);
     var groups = [];
     if (player.cards.length) {
@@ -210,7 +219,6 @@
         '<div class="tray-row">' + bonusRow(player) + '</div></div>');
     }
     if (held) {
-      /* The ten-token limit makes this count worth showing at every size. */
       groups.push('<div class="tray-group"><span class="tray-count' +
         (held >= D.MAX_TOKENS ? ' is-full' : '') + '">💎 ' + held + '/' + D.MAX_TOKENS + '</span>' +
         '<div class="tray-row">' + tokenRow(player) + '</div></div>');
@@ -241,12 +249,15 @@
                   (pickCount ? t('action.take', { n: pickCount }) : t('action.takeEmpty')) + '</button>') +
             (pickCount ? '<button type="button" class="btn btn-ghost btn-sm" id="clear-btn">' + t('action.clear') + '</button>' : '') +
           '</div>'
-        : '');
+        : (extra.canBotTakeover
+            ? '<div class="tray-actions"><button type="button" class="btn btn-gold btn-sm" id="bot-takeover-btn">' +
+                t('net.botTakeover') + '</button></div>'
+            : ''));
   }
 
-  /* One line that always says whose turn it is, and what you may do about it.
-     `opts`: { canAct, viewer, seatOfCurrent, waitingLabel } */
+  /* One line that always says whose turn it is, and what you may do about it. */
   function renderTurnLine(root, state, opts) {
+    opts = opts || {};
     var current = state.players[state.current];
     var mine = !!opts.canAct;
     var colour = PLAYER_COLORS[state.current % 4];
@@ -259,12 +270,13 @@
 
     var label, hint = '';
     if (mine) {
-      /* Around one device the name matters, because the wrong person could
-         otherwise take the turn; on your own screen "you" is clearer. */
       label = opts.namedTurn ? t('turn.yoursNamed', { p: escapeHtml(current.name) }) : t('turn.yours');
       hint = state.phase === 'discard' ? t('turn.hint.discard')
         : state.phase === 'noble' ? t('turn.hint.noble')
         : t('turn.hint.play');
+    } else if (opts.turnOffline) {
+      label = t('turn.waitingOffline', { p: escapeHtml(current.name) });
+      hint = '';
     } else if (current.type === 'ai') {
       label = t('turn.thinking', { p: escapeHtml(current.name) });
     } else if (state.phase === 'discard') {
@@ -276,10 +288,6 @@
       hint = t('turn.hint.locked');
     }
 
-    /* Online, "your turn" is only true while the room can still hear you: a
-       player cut off from the referee would otherwise be told to move and have
-       every move silently dropped. Trouble that does not block play — the host
-       is its own referee — is said alongside the turn instead of replacing it. */
     var blocked = !!(opts.warning && opts.blocked);
     if (blocked) {
       label = opts.warning;
@@ -289,9 +297,9 @@
       hint = opts.warning;
     }
 
-    root.className = 'turn-line' + (blocked ? ' is-warning' : mine ? ' is-mine' : ' is-waiting');
+    root.className = 'turn-line' + (blocked || opts.turnOffline ? ' is-warning' : mine ? ' is-mine' : ' is-waiting');
     root.innerHTML =
-      '<span class="turn-dot" style="background:' + (blocked ? 'var(--danger)' : colour) + '"></span>' +
+      '<span class="turn-dot" style="background:' + (blocked || opts.turnOffline ? 'var(--danger)' : colour) + '"></span>' +
       '<span class="turn-text">' + label + '</span>' +
       (hint ? '<span class="turn-hint' + (!blocked && opts.warning ? ' is-warning' : '') + '">' +
         hint + '</span>' : '') +
@@ -312,8 +320,6 @@
       'aria-label="' + escapeHtml(t('game.players')) + '">' + chips + '</button>';
   }
 
-  /* The nobles at full size: on a phone the strip shows only points and
-     requirements, so this is where the who and the how-far-off live. */
   function noblesModal(state, viewer) {
     var player = state.players[viewer == null ? state.current : viewer];
     var rows = state.nobles.map(function (noble) {
@@ -346,12 +352,19 @@
   }
 
   /* Everyone's board, for when the phone has no room to show it beside the game. */
-  function playersModal(state, viewer) {
+  function playersModal(state, viewer, extra) {
+    extra = extra || {};
+    var seats = extra.seats || [];
+    var hostId = extra.hostId || null;
     var best = Math.max.apply(null, state.players.map(function (p) { return p.points; }));
     var rows = state.players.map(function (player, index) {
+      var seatInfo = seats[index];
       var tags = [];
       if (index === viewer) tags.push(t('game.you'));
-      if (player.type === 'ai') tags.push(t('game.ai'));
+      if (seatInfo && hostId && seatInfo.id === hostId) tags.push(t('net.host'));
+      if (seatInfo && seatInfo.botTakeover) tags.push(t('net.botPlaying'));
+      else if (player.type === 'ai') tags.push(t('game.ai'));
+      if (seatInfo && !seatInfo.online && !seatInfo.botTakeover && player.type === 'human') tags.push(t('net.offline'));
       if (index === state.current && state.phase !== 'gameover') tags.push(t('turn.onTurn'));
       return '<div class="sheet-player' + (player.points === best && best > 0 ? ' is-leader' : '') + '">' +
         '<div class="player-head">' +
@@ -385,7 +398,6 @@
   var modalListeners = [];
   var noticeTimer = null;
 
-  /* Lets the tutorial coach marks step aside while a dialog owns the screen. */
   function onModalChange(fn) {
     modalListeners.push(fn);
   }
@@ -426,7 +438,6 @@
     return !modalRoot.hidden;
   }
 
-  /* Card detail sheet: cost breakdown plus the legal actions for this card. */
   function cardDetail(state, card, source) {
     var player = E.currentPlayer(state);
     var payment = E.paymentFor(player, card);
@@ -525,7 +536,8 @@
       '<div class="nobles">' + options + '</div>', { dismissable: false });
   }
 
-  function gameOverModal(state) {
+  function gameOverModal(state, opts) {
+    opts = opts || {};
     var ranked = (state.ranking || []).map(function (id) { return state.players[id]; });
     var winner = state.players[state.winner];
     var tie = ranked.length > 1 && ranked[1].points === winner.points;
@@ -538,6 +550,8 @@
         '<span class="standing-pts">' + player.points + '</span></div>';
     }).join('');
 
+    var canRematch = !opts.online || opts.isHost;
+
     return modal(
       '<h2 class="modal-title">🏆 ' + (tie ? t('modal.over.tie', { p: escapeHtml(winner.name) })
                                           : t('modal.over.winner', { p: escapeHtml(winner.name) })) + '</h2>' +
@@ -545,7 +559,9 @@
       '<div class="standings">' + standings + '</div>' +
       '<div class="modal-actions">' +
         '<button type="button" class="btn btn-ghost" data-do="toMenu">' + t('modal.over.menu') + '</button>' +
-        '<button type="button" class="btn btn-primary" data-do="rematch">' + t('modal.over.again') + '</button>' +
+        (canRematch
+          ? '<button type="button" class="btn btn-primary" data-do="rematch">' + t('modal.over.again') + '</button>'
+          : '<button type="button" class="btn btn-primary" disabled>' + t('net.waitHostRematch') + '</button>') +
       '</div>', { dismissable: false });
   }
 
@@ -640,8 +656,6 @@
     return node;
   }
 
-  /* One line of chat. Everything in here was typed by somebody else's browser,
-     so every part of it is escaped on the way onto the page. */
   function chatLine(line) {
     if (line.system) {
       return '<p class="chat-note">' + escapeHtml(line.text) + '</p>';
@@ -658,8 +672,6 @@
     return log.map(chatLine).join('');
   }
 
-  /* Draws the messages into an existing list and keeps it pinned to the newest
-     line, the way a chat is expected to behave. */
   function renderChatList(root, log) {
     if (!root) return;
     root.innerHTML = chatList(log);
@@ -677,8 +689,6 @@
       '</form>';
   }
 
-  /* The in-game chat sheet. On a phone the board fills the screen, so talking
-     has to happen over the top of it rather than beside it. */
   function chatModal(log, limit, enabled) {
     var node = modal(
       '<h2 class="modal-title">' + t('chat.title') + '</h2>' +
@@ -695,9 +705,6 @@
   /* ------------------------------------------------------------ toasts */
 
   function toast(message, kind) {
-    /* A dialog can fill a phone screen, so a floating toast would land on top
-       of the very text it is commenting on. While one is open the message goes
-       inside it instead, right where the tap that triggered it happened. */
     if (isModalOpen()) { modalNotice(message, kind); return; }
     var root = document.getElementById('toast-root');
     var node = document.createElement('div');
@@ -711,8 +718,6 @@
     while (root.children.length > 3) root.removeChild(root.firstChild);
   }
 
-  /* One notice line at the top of the open dialog. Replaced, never stacked:
-     the newest reason for a refused tap is the only one worth reading. */
   function modalNotice(message, kind) {
     var dialog = modalRoot && modalRoot.firstChild;
     if (!dialog) return;
