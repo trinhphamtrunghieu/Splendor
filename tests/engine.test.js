@@ -649,6 +649,35 @@ check('vercel.json configures the serverless function', function () {
   assert(typeof roomApi === 'function', 'api/room.js must export a Vercel handler function');
 });
 
+check('online button description does not mention Vercel', function () {
+  I18n.setLang('vi');
+  assert(!/vercel/i.test(I18n.t('menu.online.desc')), 'vi menu.online.desc must not mention Vercel');
+  I18n.setLang('en');
+  assert(!/vercel/i.test(I18n.t('menu.online.desc')), 'en menu.online.desc must not mention Vercel');
+  I18n.setLang('vi');
+});
+
+check('turn timer initializes in integer minutes and timeoutTurn forfeits the active turn', function () {
+  var state = E.createGame({
+    players: [{ name: 'An', type: 'human' }, { name: 'Bình', type: 'human' }],
+    seed: 42,
+    turnTimer: 3,
+    now: 100000
+  });
+  eq(state.turnTimer, 3, 'turnTimer stored in integer minutes');
+  eq(state.turnLimitMs, 180000, '3 minutes = 180000ms');
+  eq(state.turnStartedAt, 100000, 'turnStartedAt initialized');
+  eq(state.turnDeadline, 280000, 'turnDeadline = 100000 + 180000');
+  eq(state.current, 0);
+
+  var res = E.timeoutTurn(state);
+  eq(res.ok, true, 'timeoutTurn succeeds');
+  eq(state.current, 1, 'turn passes to player 1 after player 0 times out');
+  eq(state.log[state.log.length - 1].key, 'timeout', 'timeout log entry recorded');
+  eq(state.log[state.log.length - 1].params.p, 'An');
+  assert(state.turnDeadline > 280000 || state.turnLimitMs === 180000, 'next turn gets a fresh deadline');
+});
+
 console.log('\nartwork');
 
 check('every gem colour has a drawn stone in the sprite', function () {

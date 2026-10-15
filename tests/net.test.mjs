@@ -423,5 +423,64 @@ function startTestServer(port, managerOpts) {
   await srv.close();
 }
 
+/* =========================================================================
+   6. Turn Timer (Set by Host in Integer Minutes, Forfeits Turn on Expiry)
+   ========================================================================= */
+{
+  console.log('\nTurn Timer: integer minutes configuration & automatic turn forfeiture on timeout\n');
+  let clock = 500000;
+  const srv = await startTestServer(9416, {
+    waitTimeout: 60,
+    now: () => clock
+  });
+  const API = srv.url;
+
+  const host = Net.create({ clientId: 't-host', apiUrl: API, waitMs: 60 });
+  const guest = Net.create({ clientId: 't-guest', apiUrl: API, waitMs: 60 });
+
+  let hostView = null;
+  let guestView = null;
+  const timeouts = [];
+  host.on('view', (v) => { hostView = v.state; });
+  guest.on('view', (v) => { guestView = v.state; });
+  host.on('turnTimeout', (info) => { timeouts.push(info); });
+
+  host.host({ room: 'TM234', name: 'Chủ Phòng', turnTimer: 3 });
+  await until(() => host.status().joined);
+  check('host sets turnTimer in integer minutes (3 min) when creating room',
+    host.status().turnTimer === 3);
+
+  guest.join({ room: 'TM234', name: 'Khách' });
+  await until(() => guest.status().joined && host.seats.length === 2);
+  check('guest receives the room turnTimer (3 min) in lobby',
+    guest.status().turnTimer === 3);
+
+  host.startGame({ seed: 77 });
+  await until(() => hostView && guestView);
+  check('game state carries turnTimer=3 and turnLimitMs=180000',
+    hostView.turnTimer === 3 && hostView.turnLimitMs === 180000);
+  check('turn 0 starts at seat 0 with turnRemainingMs = 180000',
+    hostView.current === 0 && hostView.turnRemainingMs === 180000);
+
+  /* Advance clock past the 3-minute thinking limit without seat 0 making a move */
+  clock += 180500;
+  host.checkTimeout();
+  await until(() => hostView.current === 1 && guestView.current === 1);
+
+  check('when timer expires, seat 0 forfeits its turn and turn passes to seat 1',
+    hostView.current === 1 && guestView.current === 1);
+  check('timeout log entry is recorded in game log',
+    hostView.log[hostView.log.length - 1].key === 'timeout' &&
+    hostView.log[hostView.log.length - 1].params.p === 'Chủ Phòng');
+  check('turnTimeout event fires with the timed-out player info',
+    timeouts.length === 1 && timeouts[0].seat === 0 && timeouts[0].name === 'Chủ Phòng');
+  check('seat 1 receives a fresh 3-minute timer for their turn',
+    guestView.turnDeadline === clock + 180000);
+
+  host.leave();
+  guest.leave();
+  await srv.close();
+}
+
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');
 process.exit(fail ? 1 : 0);

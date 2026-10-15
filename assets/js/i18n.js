@@ -110,9 +110,14 @@
       'modal.confirmNew.body': 'Ván đang chơi sẽ bị xoá.',
 
       'menu.online': 'Chơi qua mạng',
-      'menu.online.desc': '2–4 người ở xa nhau, mỗi người một máy. Máy chủ trọng tài trực tiếp trên Vercel.',
+      'menu.online.desc': '2–4 người ở xa nhau, mỗi người một máy. Tạo phòng và chia mã cho bạn bè.',
 
       'net.yourName': 'Tên của bạn',
+      'net.turnTimer': 'Thời gian suy nghĩ mỗi lượt',
+      'net.minutesUnit': 'phút',
+      'net.turnTimerHint': 'Số nguyên phút cho mỗi lượt. Hết giờ chưa đi sẽ bị mất lượt.',
+      'net.lobbyTimer': 'Thời gian suy nghĩ: {n} phút / lượt',
+      'net.badTimer': 'Thời gian suy nghĩ phải là số nguyên từ 1 đến 60 phút.',
       'net.createRoom': 'Tạo phòng mới',
       'net.joinRoom': 'Vào phòng',
       'net.resumeRoom': 'Vào lại phòng gần nhất',
@@ -128,7 +133,7 @@
       'net.connecting': 'Đang kết nối máy chủ…',
       'net.hostWaiting': 'Đã kết nối. Chia mã phòng cho bạn bè rồi bấm Bắt đầu.',
       'net.guestWaiting': 'Đã vào phòng. Đang chờ chủ phòng bắt đầu…',
-      'net.lobbyHint': 'Mọi người mở cùng đường link, chọn “Chơi qua mạng” rồi nhập mã phòng. Máy chủ Vercel làm trọng tài nên chủ phòng có mất mạng thì ván đấu vẫn tiếp tục.',
+      'net.lobbyHint': 'Mọi người mở cùng đường link, chọn “Chơi qua mạng” rồi nhập mã phòng. Máy chủ làm trọng tài nên chủ phòng có mất mạng thì ván đấu vẫn tiếp tục.',
       'net.needTwo': 'Cần ít nhất 2 người chơi.',
       'net.notYourTurn': 'Chưa tới lượt bạn.',
       'net.waitingFor': 'Đang chờ {p}…',
@@ -178,6 +183,7 @@
       'chat.botTakeover': 'Máy đang đi thay cho {p}.',
       'chat.renamed': '{a} giờ là {b}.',
       'chat.started': 'Ván bắt đầu.',
+      'chat.timeout': '{p} hết thời gian suy nghĩ và mất lượt.',
       'chat.unread': '{n} tin mới',
 
       'tut.title': 'Hướng dẫn cho người mới',
@@ -256,6 +262,7 @@
       'log.stalemate': 'Nhiều lượt không ai mua được thẻ — ván đấu dừng lại.',
       'log.win': '{p} thắng với {pts} điểm!',
       'log.pass': '{p} không còn nước đi hợp lệ và bỏ lượt.',
+      'log.timeout': '{p} hết thời gian suy nghĩ và mất lượt.',
 
       'gem.white': 'Kim cương',
       'gem.blue': 'Lam ngọc',
@@ -392,9 +399,14 @@
       'modal.confirmNew.body': 'The game in progress will be discarded.',
 
       'menu.online': 'Play online',
-      'menu.online.desc': '2–4 players on their own devices, anywhere. Refereed by the Vercel server.',
+      'menu.online.desc': '2–4 players on their own devices, anywhere. Create a room and share the code.',
 
       'net.yourName': 'Your name',
+      'net.turnTimer': 'Thinking time per turn',
+      'net.minutesUnit': 'min',
+      'net.turnTimerHint': 'Integer minutes per turn. Running out of time forfeits the turn.',
+      'net.lobbyTimer': 'Thinking time: {n} min / turn',
+      'net.badTimer': 'Thinking time must be an integer between 1 and 60 minutes.',
       'net.createRoom': 'Create a room',
       'net.joinRoom': 'Join room',
       'net.resumeRoom': 'Back to your last room',
@@ -410,7 +422,7 @@
       'net.connecting': 'Connecting to server…',
       'net.hostWaiting': 'Connected. Share the room code, then press Start.',
       'net.guestWaiting': 'In the room. Waiting for the host to start…',
-      'net.lobbyHint': 'Everyone opens the same link, picks “Play online” and types the room code. The Vercel server is the referee, so the game keeps running even if the host drops.',
+      'net.lobbyHint': 'Everyone opens the same link, picks “Play online” and types the room code. The server is the referee, so the game keeps running even if the host drops.',
       'net.needTwo': 'At least two players are needed.',
       'net.notYourTurn': 'It is not your turn.',
       'net.waitingFor': 'Waiting for {p}…',
@@ -460,6 +472,7 @@
       'chat.botTakeover': 'A bot is filling in for {p}.',
       'chat.renamed': '{a} is now {b}.',
       'chat.started': 'The game has started.',
+      'chat.timeout': '{p} ran out of time and lost their turn.',
       'chat.unread': '{n} new',
 
       'tut.title': 'Tutorial for new players',
@@ -538,6 +551,7 @@
       'log.stalemate': 'Nobody could buy a card for many turns — the game ends.',
       'log.win': '{p} wins with {pts} points!',
       'log.pass': '{p} had no legal move and passed.',
+      'log.timeout': '{p} ran out of time and lost their turn.',
 
       'gem.white': 'Diamond',
       'gem.blue': 'Sapphire',

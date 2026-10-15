@@ -46,6 +46,17 @@
   function cleanName(text) { return clean(text, MAX_NAME); }
   function cleanChat(text) { return clean(text, MAX_CHAT); }
 
+  function cleanTurnTimer(value, fallback) {
+    var def = fallback != null ? fallback : 2;
+    if (value == null || value === '') return def;
+    var n = Number(value);
+    if (!Number.isFinite(n)) return def;
+    var mins = Math.round(n);
+    if (mins < 1) return 1;
+    if (mins > 60) return 60;
+    return mins;
+  }
+
   function randomId(prefix) {
     return (prefix || 'p') + '-' + Math.random().toString(36).slice(2, 10);
   }
@@ -98,6 +109,7 @@
       seats: [],
       phase: 'lobby',
       hostId: null,
+      turnTimer: 2,
       seq: 0,
       joined: false,
       hostGone: false,          // kept for status compatibility (always false with server referee)
@@ -116,7 +128,9 @@
     var lastChatAt = 0;
     var lastChatSeq = 0;
     var lastViewSeq = -1;
+    var lastTimeoutAt = 0;
     var wantedName = null;
+    var wantedTimer = 2;
     var activeLoopId = 0;
 
     var CONNECT_TIMEOUT = options.connectTimeout || 6500;
@@ -161,6 +175,7 @@
         phase: net.phase,
         joined: net.joined,
         hostId: net.hostId,
+        turnTimer: net.turnTimer,
         hostGone: false,
         seats: net.seats.slice(),
         error: net.lastError,
@@ -243,6 +258,7 @@
         net.seq = r.seq != null ? r.seq : net.seq;
         net.phase = r.phase || 'lobby';
         net.hostId = r.hostId || net.hostId;
+        if (r.turnTimer != null) net.turnTimer = cleanTurnTimer(r.turnTimer, net.turnTimer);
         net.role = net.hostId === net.clientId ? 'host' : 'guest';
         net.seats = (r.seats || []).map(function (s, idx) {
           return {
@@ -290,6 +306,11 @@
           });
         }
 
+        if (r.lastTimeout && r.lastTimeout.at && r.lastTimeout.at !== lastTimeoutAt) {
+          lastTimeoutAt = r.lastTimeout.at;
+          emit('turnTimeout', r.lastTimeout);
+        }
+
         emit('room', r);
       }
 
@@ -302,6 +323,11 @@
       }
 
       if (data.view && data.view.state) {
+        if (data.view.state.turnRemainingMs != null) {
+          data.view.state.clientDeadline = Date.now() + Number(data.view.state.turnRemainingMs);
+        } else {
+          data.view.state.clientDeadline = null;
+        }
         if (forceView || data.view.seq !== lastViewSeq) {
           lastViewSeq = data.view.seq;
           emit('view', data.view);
@@ -341,6 +367,7 @@
               room: net.room,
               clientId: net.clientId,
               name: wantedName,
+              turnTimer: wantedTimer,
               chatSince: lastChatSeq
             });
             if (wantsLeave || loopId !== activeLoopId) return;
@@ -445,7 +472,10 @@
       net.joined = false;
       net.connected = false;
       lastViewSeq = -1;
+      lastTimeoutAt = 0;
       wantedName = cleanName(config.name) || 'Host';
+      wantedTimer = cleanTurnTimer(config.turnTimer, 2);
+      net.turnTimer = wantedTimer;
       net.seats = [{ id: net.clientId, name: wantedName, type: 'human', online: true, seat: 0 }];
 
       watchForConnect();
@@ -453,7 +483,8 @@
         op: 'host',
         room: net.room,
         clientId: net.clientId,
-        name: wantedName
+        name: wantedName,
+        turnTimer: wantedTimer
       }).then(function (res) {
         if (wantsLeave) return;
         if (res && res.ok) {
@@ -615,6 +646,36 @@
       }).catch(function () { onNetworkDrop(); });
     };
 
+    net.setTimer = function (minutes) {
+      var mins = cleanTurnTimer(minutes, net.turnTimer);
+      wantedTimer = mins;
+      net.turnTimer = mins;
+      if (net.room && net.connected) {
+        postOp({
+          op: 'setTimer',
+          room: net.room,
+          clientId: net.clientId,
+          turnTimer: mins,
+          chatSince: lastChatSeq
+        }).then(function (res) {
+          if (res && res.ok) ingest(res, false);
+        }).catch(function () { onNetworkDrop(); });
+      }
+      return mins;
+    };
+
+    net.checkTimeout = function () {
+      if (!net.room || !net.connected) return;
+      postOp({
+        op: 'timeout',
+        room: net.room,
+        clientId: net.clientId,
+        chatSince: lastChatSeq
+      }).then(function (res) {
+        if (res && res.ok) ingest(res, true);
+      }).catch(function () { /* ignore transient error */ });
+    };
+
     /* ------------------------------------------------------------ renaming */
 
     net.canRename = function () { return net.phase === 'lobby'; };
@@ -766,6 +827,7 @@
     viewFor: viewFor,
     cleanName: cleanName,
     cleanChat: cleanChat,
+    cleanTurnTimer: cleanTurnTimer,
     MAX_NAME: MAX_NAME,
     MAX_CHAT: MAX_CHAT,
     CHAT_HISTORY: CHAT_HISTORY

@@ -54,6 +54,9 @@ var DEFAULT_OFFLINE_MS = 12000;   // seat marked offline if unseen for 12s
 var DEFAULT_WAIT_MS = 4500;       // long-poll hold duration (< Vercel 10s limit)
 var ROOM_TTL_SECONDS = 14400;     // 4 hours in Redis / memory cleanup
 var ROOM_MAX_IDLE_MS = 14400000;
+var DEFAULT_TURN_MINUTES = 2;     // default thinking time per turn (minutes)
+var MIN_TURN_MINUTES = 1;
+var MAX_TURN_MINUTES = 60;
 
 /* ---------------------------------------------------------- sanitizers */
 
@@ -67,6 +70,17 @@ function clean(text, limit) {
 
 function cleanName(text) { return clean(text, MAX_NAME); }
 function cleanChat(text) { return clean(text, MAX_CHAT); }
+
+function cleanTurnTimer(value, fallback) {
+  var def = fallback != null ? fallback : DEFAULT_TURN_MINUTES;
+  if (value == null || value === '') return def;
+  var n = Number(value);
+  if (!Number.isFinite(n)) return def;
+  var mins = Math.round(n);
+  if (mins < MIN_TURN_MINUTES) return MIN_TURN_MINUTES;
+  if (mins > MAX_TURN_MINUTES) return MAX_TURN_MINUTES;
+  return mins;
+}
 
 function roomCode() {
   var out = '';
@@ -91,9 +105,10 @@ function isValidCode(text) {
 
 /* Redacts hidden information for a single seat: deck cards become nulls (count
    only) and other players' reserved cards become `{ hidden: true }`. */
-function viewFor(state, seat) {
+function viewFor(state, seat, now) {
   if (!state) return null;
   var view = E.clone(state);
+  var ts = now != null ? now : Date.now();
   [1, 2, 3].forEach(function (tier) {
     view.decks[tier] = view.decks[tier].map(function () { return null; });
   });
@@ -102,6 +117,8 @@ function viewFor(state, seat) {
       player.reserved = player.reserved.map(function () { return { hidden: true }; });
     }
   });
+  view.serverNow = ts;
+  view.turnRemainingMs = view.turnDeadline ? Math.max(0, view.turnDeadline - ts) : null;
   return view;
 }
 
@@ -328,8 +345,67 @@ function createRoomManager(options) {
 
     if (state.phase === 'gameover') {
       room.phase = 'ended';
+      state.turnStartedAt = null;
+      state.turnDeadline = null;
     }
     return moved;
+  }
+
+  /* Resets the per-turn countdown clock to the room's configured thinking time
+     whenever a new turn begins. */
+  function resetTurnClock(room) {
+    if (!room || !room.state) return;
+    var state = room.state;
+    var mins = cleanTurnTimer(room.turnTimer, DEFAULT_TURN_MINUTES);
+    var limitMs = mins * 60 * 1000;
+    room.turnTimer = mins;
+    room.turnLimitMs = limitMs;
+    state.turnTimer = mins;
+    state.turnLimitMs = limitMs;
+    if (state.phase === 'gameover' || room.phase !== 'playing') {
+      state.turnStartedAt = null;
+      state.turnDeadline = null;
+      return;
+    }
+    var now = nowFn();
+    state.turnStartedAt = now;
+    state.turnDeadline = now + limitMs;
+  }
+
+  /* Enforces the turn timer on the server: if the current player has not
+     completed their turn before `state.turnDeadline`, their turn is forfeited
+     (`E.timeoutTurn`), any subsequent AI turns are executed, and the clock is
+     reset for the next player. */
+  function checkTurnTimeout(room) {
+    if (!room || room.phase !== 'playing' || !room.state) return false;
+    var state = room.state;
+    if (state.phase === 'gameover' || !state.turnDeadline) return false;
+    var now = nowFn();
+    if (now < state.turnDeadline) return false;
+
+    var timedOutSeat = state.current;
+    var timedOutPlayer = state.players[timedOutSeat];
+    var res = E.timeoutTurn(state);
+    if (!res.ok) return false;
+
+    room.lastTimeout = {
+      seat: timedOutSeat,
+      name: timedOutPlayer ? timedOutPlayer.name : '',
+      turn: state.turnCount - 1,
+      at: now
+    };
+
+    if (state.phase === 'gameover') {
+      room.phase = 'ended';
+      state.turnStartedAt = null;
+      state.turnDeadline = null;
+    } else {
+      runBotTurns(room);
+      resetTurnClock(room);
+    }
+    room.seq++;
+    room.updated = now;
+    return true;
   }
 
   function roomSummary(room) {
@@ -341,6 +417,10 @@ function createRoomManager(options) {
       phase: room.phase,
       hostId: room.hostId,
       closed: !!room.closed,
+      turnTimer: cleanTurnTimer(room.turnTimer, DEFAULT_TURN_MINUTES),
+      turnLimitMs: cleanTurnTimer(room.turnTimer, DEFAULT_TURN_MINUTES) * 60 * 1000,
+      turnDeadline: room.state ? room.state.turnDeadline : null,
+      lastTimeout: room.lastTimeout || null,
       current: room.state ? room.state.current : 0,
       round: room.state ? room.state.round : 1,
       seats: room.seats.map(function (s, i) {
@@ -374,7 +454,7 @@ function createRoomManager(options) {
         t: 'view',
         seq: room.seq,
         seat: seat,
-        state: viewFor(room.state, seat)
+        state: viewFor(room.state, seat, nowFn())
       } : null,
       chat: chatLines
     };
@@ -394,16 +474,24 @@ function createRoomManager(options) {
   function waitForChange(room, clientId, since, chatSince, customWaitMs) {
     return new Promise(function (resolve) {
       var duration = customWaitMs != null ? customWaitMs : waitMs;
+      if (room.phase === 'playing' && room.state && room.state.turnDeadline) {
+        var untilDeadline = Math.max(15, room.state.turnDeadline - nowFn() + 10);
+        if (untilDeadline < duration) duration = untilDeadline;
+      }
       var entry = {
         clientId: clientId,
         since: since,
         chatSince: chatSince,
         resolve: resolve,
-        timer: setTimeout(function () {
+        timer: setTimeout(async function () {
           var list = waiters.get(room.code) || [];
           var idx = list.indexOf(entry);
           if (idx >= 0) list.splice(idx, 1);
-          if (sweepPresence(room, clientId)) {
+          var timedOut = checkTurnTimeout(room);
+          var presenceChanged = sweepPresence(room, clientId);
+          if (timedOut) {
+            await saveRoom(room, true);
+          } else if (presenceChanged) {
             notifyWaiters(room);
           }
           resolve(buildPayload(room, clientId, chatSince));
@@ -451,6 +539,10 @@ function createRoomManager(options) {
           if (existing.phase === 'lobby' && name) {
             existing.seats[existingSeat].name = name;
           }
+          if (existing.phase === 'lobby' && body.turnTimer != null) {
+            existing.turnTimer = cleanTurnTimer(body.turnTimer, existing.turnTimer);
+            existing.turnLimitMs = existing.turnTimer * 60 * 1000;
+          }
           ensureActiveHost(existing);
           existing.seq++;
           await saveRoom(existing, true);
@@ -463,6 +555,7 @@ function createRoomManager(options) {
         }
       }
 
+      var turnTimer = cleanTurnTimer(body.turnTimer, DEFAULT_TURN_MINUTES);
       var room = {
         code: code,
         seq: 1,
@@ -470,6 +563,9 @@ function createRoomManager(options) {
         phase: 'lobby',
         hostId: clientId,
         creatorId: clientId,
+        turnTimer: turnTimer,
+        turnLimitMs: turnTimer * 60 * 1000,
+        lastTimeout: null,
         seats: [{
           id: clientId,
           name: name,
@@ -497,6 +593,10 @@ function createRoomManager(options) {
     if (!room || room.closed) return { ok: false, error: 'room-not-found', room: code };
 
     var presenceChanged = sweepPresence(room, op === 'disconnect' ? null : clientId);
+    var timedOutBeforeOp = checkTurnTimeout(room);
+    if (timedOutBeforeOp) {
+      await saveRoom(room, true);
+    }
 
     /* 2. Join or rejoin a room */
     if (op === 'join') {
@@ -619,6 +719,15 @@ function createRoomManager(options) {
         }
       });
 
+      if (body.turnTimer != null) {
+        room.turnTimer = cleanTurnTimer(body.turnTimer, room.turnTimer);
+        room.turnLimitMs = room.turnTimer * 60 * 1000;
+      } else {
+        room.turnTimer = cleanTurnTimer(room.turnTimer, DEFAULT_TURN_MINUTES);
+        room.turnLimitMs = room.turnTimer * 60 * 1000;
+      }
+      room.lastTimeout = null;
+
       var players = room.seats.map(function (s) {
         return {
           name: s.name,
@@ -628,10 +737,13 @@ function createRoomManager(options) {
       });
       room.state = E.createGame({
         players: players,
-        seed: body.seed != null ? Number(body.seed) : undefined
+        seed: body.seed != null ? Number(body.seed) : undefined,
+        turnTimer: room.turnTimer,
+        now: nowFn()
       });
       room.phase = 'playing';
       runBotTurns(room);
+      resetTurnClock(room);
       room.seq++;
       await saveRoom(room, true);
       return buildPayload(room, clientId, body.chatSince);
@@ -642,12 +754,21 @@ function createRoomManager(options) {
       if (!room.state || room.phase !== 'playing') {
         return { ok: false, error: 'not-playing', room: roomSummary(room) };
       }
+      if (timedOutBeforeOp) {
+        var lateOut = buildPayload(room, clientId, body.chatSince);
+        lateOut.ok = false;
+        lateOut.error = 'log.timeout';
+        lateOut.params = { p: room.lastTimeout ? room.lastTimeout.name : '' };
+        return lateOut;
+      }
       if (actorSeat !== room.state.current) {
         var syncOut = buildPayload(room, clientId, body.chatSince);
         syncOut.ok = false;
         syncOut.error = 'err.notNow';
         return syncOut;
       }
+      var prevTurnCount = room.state.turnCount;
+      var prevCurrent = room.state.current;
       var action = body.action || {};
       var result = E.applyAction(room.state, action);
       if (!result.ok) {
@@ -660,11 +781,38 @@ function createRoomManager(options) {
       }
       if (room.state.phase === 'gameover') {
         room.phase = 'ended';
+        room.state.turnStartedAt = null;
+        room.state.turnDeadline = null;
       } else {
-        runBotTurns(room);
+        var botsMoved = runBotTurns(room);
+        if (botsMoved || room.state.turnCount !== prevTurnCount || room.state.current !== prevCurrent) {
+          resetTurnClock(room);
+        }
       }
       room.seq++;
       await saveRoom(room, true);
+      return buildPayload(room, clientId, body.chatSince);
+    }
+
+    /* 7b. Client-triggered turn timeout check */
+    if (op === 'timeout') {
+      if (presenceChanged && !timedOutBeforeOp) {
+        await saveRoom(room, false);
+      }
+      return buildPayload(room, clientId, body.chatSince);
+    }
+
+    /* 7c. Update turn timer in lobby (host only) */
+    if (op === 'setTimer') {
+      if (room.hostId !== clientId) return { ok: false, error: 'not-host' };
+      if (room.phase !== 'lobby') return { ok: false, error: 'not-in-lobby' };
+      var nextMins = cleanTurnTimer(body.turnTimer, room.turnTimer);
+      if (nextMins !== room.turnTimer) {
+        room.turnTimer = nextMins;
+        room.turnLimitMs = nextMins * 60 * 1000;
+        room.seq++;
+        await saveRoom(room, true);
+      }
       return buildPayload(room, clientId, body.chatSince);
     }
 
@@ -685,7 +833,11 @@ function createRoomManager(options) {
         room.state.players[targetSeat].type = 'ai';
         room.state.players[targetSeat].difficulty = seatObj.difficulty;
       }
-      runBotTurns(room);
+      var btPrevTurn = room.state.turnCount;
+      var btMoved = runBotTurns(room);
+      if (btMoved || room.state.turnCount !== btPrevTurn) {
+        resetTurnClock(room);
+      }
       room.seq++;
       await saveRoom(room, true);
       return buildPayload(room, clientId, body.chatSince);
@@ -767,7 +919,11 @@ function createRoomManager(options) {
 
       ensureActiveHost(room);
       if (room.phase === 'playing') {
-        runBotTurns(room);
+        var lvPrevTurn = room.state.turnCount;
+        var lvMoved = runBotTurns(room);
+        if (lvMoved || room.state.turnCount !== lvPrevTurn) {
+          resetTurnClock(room);
+        }
       }
       room.seq++;
       await saveRoom(room, true);
@@ -790,8 +946,11 @@ function createRoomManager(options) {
     var seat = seatOf(room, clientId);
     if (seat < 0) return { ok: false, error: 'not-in-room', room: roomSummary(room) };
 
+    var timedOut = checkTurnTimeout(room);
     var changed = sweepPresence(room, clientId);
-    if (changed) {
+    if (timedOut) {
+      await saveRoom(room, true);
+    } else if (changed) {
       await saveRoom(room, false);
     }
 

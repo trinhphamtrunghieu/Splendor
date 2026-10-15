@@ -59,9 +59,18 @@
     var decks = D.buildDeck();
     var perGem = D.TOKENS_BY_PLAYERS[players.length] || 7;
 
+    var now = options.now != null ? Number(options.now) : Date.now();
+    var rawTimer = options.turnTimer != null ? Number(options.turnTimer) : 0;
+    var turnTimer = rawTimer > 0 ? Math.max(1, Math.min(60, Math.round(rawTimer))) : 0;
+    var turnLimitMs = turnTimer > 0 ? turnTimer * 60 * 1000 : 0;
+
     var state = {
       seed: seed,
-      createdAt: Date.now(),
+      createdAt: now,
+      turnTimer: turnTimer,
+      turnLimitMs: turnLimitMs,
+      turnStartedAt: turnLimitMs > 0 ? now : null,
+      turnDeadline: turnLimitMs > 0 ? now + turnLimitMs : null,
       tokens: (function () {
         var bank = emptyPile(true);
         COLORS.forEach(function (c) { bank[c] = perGem; });
@@ -275,6 +284,32 @@
     return endTurn(state);
   }
 
+  /* Forfeits the current player's turn when their thinking timer expires. */
+  function timeoutTurn(state) {
+    if (!state || state.phase === 'gameover') return { ok: false, error: 'err.notNow' };
+    var player = currentPlayer(state);
+    if (state.phase === 'noble') {
+      state.pendingNobles = [];
+      state.phase = 'play';
+    }
+    if (state.phase === 'discard' || countTokens(player.tokens) > D.MAX_TOKENS) {
+      var excess = countTokens(player.tokens) - D.MAX_TOKENS;
+      var order = COLORS.concat(['gold']);
+      for (var i = 0; i < order.length && excess > 0; i++) {
+        var c = order[i];
+        var giveBack = Math.min(player.tokens[c] || 0, excess);
+        if (giveBack > 0) {
+          player.tokens[c] -= giveBack;
+          state.tokens[c] += giveBack;
+          excess -= giveBack;
+        }
+      }
+      state.phase = 'play';
+    }
+    log(state, 'timeout', { p: player.name });
+    return advance(state);
+  }
+
   function buyCard(state, cardId) {
     if (state.phase !== 'play') return { ok: false, error: 'err.notNow' };
     var player = currentPlayer(state);
@@ -418,11 +453,18 @@
     state.current = next;
     if (next === 0) state.round++;
     state.phase = 'play';
+    if (state.turnLimitMs > 0) {
+      var now = Date.now();
+      state.turnStartedAt = now;
+      state.turnDeadline = now + state.turnLimitMs;
+    }
     return { ok: true, needs: null };
   }
 
   function finish(state) {
     state.phase = 'gameover';
+    state.turnStartedAt = null;
+    state.turnDeadline = null;
     var ranked = state.players.slice().sort(function (a, b) {
       if (b.points !== a.points) return b.points - a.points;
       return a.cards.length - b.cards.length;   // fewer cards wins ties
@@ -485,6 +527,7 @@
       case 'reserve': return reserveCard(state, action.cardId);
       case 'reserveDeck': return reserveFromDeck(state, action.tier);
       case 'pass': return passTurn(state);
+      case 'timeout': return timeoutTurn(state);
       case 'discard': return discardTokens(state, action.pile);
       case 'noble': return chooseNoble(state, action.nobleId);
       default: return { ok: false, error: 'err.generic' };
@@ -500,6 +543,7 @@
     buyCard: buyCard,
     discardTokens: discardTokens,
     passTurn: passTurn,
+    timeoutTurn: timeoutTurn,
     hasRealAction: hasRealAction,
     chooseNoble: chooseNoble,
     eligibleNobles: eligibleNobles,

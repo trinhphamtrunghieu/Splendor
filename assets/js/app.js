@@ -26,7 +26,9 @@
     discardSel: {},
     curtainAck: null,
     aiTimer: null,
-    net: null,                // the Vercel server room, when playing online
+    countdownTimer: null,
+    lastTimeoutCheckAt: 0,
+    net: null,                // the authoritative server room, when playing online
     role: null,               // 'host' | 'guest' (dynamically updated on host failover)
     seat: -1,                 // my seat in an online game
     pending: false,           // an intent is in flight to the server
@@ -41,6 +43,7 @@
       difficulty: 'normal',
       tutorialDone: false,
       onlineName: '',
+      turnTimer: 2,
       names: { single: [], multi: [] }
     }
   };
@@ -181,10 +184,37 @@
     return Net.isValidCode(code) ? code : null;
   }
 
+  function syncOnlineTimerUI(mins) {
+    var timerInput = $('online-timer');
+    if (timerInput && document.activeElement !== timerInput) {
+      timerInput.value = String(mins);
+    }
+    var presets = $('online-timer-presets');
+    if (presets) {
+      Array.prototype.forEach.call(presets.querySelectorAll('.seg-btn'), function (btn) {
+        btn.classList.toggle('is-on', +btn.dataset.mins === +mins);
+      });
+    }
+  }
+
+  function readOnlineTimerMinutes() {
+    var timerInput = $('online-timer');
+    if (!timerInput) return Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    var raw = String(timerInput.value || '').trim();
+    if (!/^\d+$/.test(raw)) return null;
+    var n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 60) return null;
+    return n;
+  }
+
   function renderOnlineSetup() {
     $('online-setup').hidden = false;
     $('setup').hidden = true;
     $('online-name').value = (App.settings.onlineName || '').trim() || t('menu.you');
+    var mins = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    App.settings.turnTimer = mins;
+    if ($('online-timer')) $('online-timer').value = String(mins);
+    syncOnlineTimerUI(mins);
     Array.prototype.forEach.call(document.querySelectorAll('.mode-card'), function (card) {
       card.classList.toggle('is-on', card.dataset.mode === 'online');
     });
@@ -221,6 +251,7 @@
 
   function showMenu() {
     clearTimeout(App.aiTimer);
+    stopTurnCountdown();
     Tutorial.stop();
     document.body.classList.remove('is-curtained');
     showScreen('screen-menu');
@@ -453,18 +484,32 @@
       if (App.state && $('screen-game').classList.contains('is-active')) render();
     });
 
+    net.on('turnTimeout', function (info) {
+      if (info && info.name) {
+        UI.toast(t('log.timeout', { p: info.name }), 'error');
+        systemNote(t('chat.timeout', { p: info.name }));
+      }
+    });
+
     net.on('view', function (message) {
       if (!message || !message.state) return;
       var wasOver = App.state && App.state.phase === 'gameover';
+      var prevTurnKey = App.state ? (App.state.turnCount + ':' + App.state.current) : null;
+      var nextTurnKey = message.state.turnCount + ':' + message.state.current;
+      var turnChanged = prevTurnKey !== null && prevTurnKey !== nextTurnKey;
       App.seat = message.seat;
       App.state = message.state;
       App.pending = false;
+      if (turnChanged) {
+        App.picked = [];
+        App.discardSel = {};
+      }
       saveGame();
       if (!$('screen-game').classList.contains('is-active')) {
         showScreen('screen-game');
         UI.closeModal();
         applyI18n();
-      } else if (wasOver && App.state.phase !== 'gameover') {
+      } else if ((wasOver && App.state.phase !== 'gameover') || (turnChanged && App.state.phase !== 'gameover' && !chatOpen())) {
         UI.closeModal();
       }
       syncOnlineBoard();
@@ -526,6 +571,19 @@
   }
 
   function hostRoom(resumeCode) {
+    var mins = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    if (!resumeCode) {
+      var parsed = readOnlineTimerMinutes();
+      if (parsed === null) {
+        UI.toast(t('net.badTimer'), 'error');
+        if ($('online-timer')) $('online-timer').focus();
+        return;
+      }
+      mins = parsed;
+      App.settings.turnTimer = mins;
+      saveSettings();
+    }
+
     var net = Net.create({ clientId: clientId() });
     attachNet(net);
     App.mode = 'online';
@@ -537,7 +595,8 @@
 
     net.host({
       room: resumeCode || null,
-      name: onlineName()
+      name: onlineName(),
+      turnTimer: mins
     });
     session(ONLINE_KEY, { room: net.room });
     showLobby();
@@ -565,6 +624,7 @@
   }
 
   function leaveOnline(message) {
+    stopTurnCountdown();
     if (App.net) App.net.leave();
     App.net = null;
     App.roster = null;
@@ -581,6 +641,7 @@
 
   function showLobby() {
     clearTimeout(App.aiTimer);
+    stopTurnCountdown();
     Tutorial.stop();
     showScreen('screen-lobby');
     applyI18n();
@@ -626,6 +687,10 @@
     var line = lobbyStatus(st);
     $('lobby-status').textContent = line.text;
     $('lobby-status').className = 'lobby-status' + (line.cls ? ' ' + line.cls : '');
+    var timerBadge = $('lobby-timer-badge');
+    if (timerBadge) {
+      timerBadge.textContent = '⏱ ' + t('net.lobbyTimer', { n: st.turnTimer || App.settings.turnTimer || 2 });
+    }
 
     var seats = st.seats.length ? st.seats : [];
     $('seat-list').innerHTML = seats.map(function (seat, index) {
@@ -697,6 +762,85 @@
     return !!(seatInfo && !seatInfo.online && !seatInfo.botTakeover && seatInfo.type === 'human');
   }
 
+  function remainingTurnMs(state) {
+    if (!state || state.phase === 'gameover' || !state.turnLimitMs) return null;
+    var deadline = state.clientDeadline != null ? state.clientDeadline : state.turnDeadline;
+    if (!deadline) return null;
+    return Math.max(0, deadline - Date.now());
+  }
+
+  function turnTimerInfo(state) {
+    var ms = remainingTurnMs(state);
+    if (ms === null) return null;
+    var cls = ms <= 10000 ? 'is-critical' : (ms <= 30000 ? 'is-low' : '');
+    return {
+      ms: ms,
+      text: UI.formatTimer(ms),
+      cls: cls
+    };
+  }
+
+  function stopTurnCountdown() {
+    if (App.countdownTimer) {
+      clearInterval(App.countdownTimer);
+      App.countdownTimer = null;
+    }
+  }
+
+  function updateTurnTimerDOM() {
+    var state = App.state;
+    var topTimer = $('turn-timer');
+    var info = turnTimerInfo(state);
+    if (!info) {
+      if (topTimer) topTimer.hidden = true;
+      stopTurnCountdown();
+      return;
+    }
+    if (topTimer) {
+      topTimer.hidden = false;
+      topTimer.textContent = '⏱ ' + info.text;
+      topTimer.className = 'turn-timer' + (info.cls ? ' ' + info.cls : '');
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-turn-timer]'), function (el) {
+      el.textContent = '⏱ ' + info.text;
+      var base = el.classList.contains('player-timer') ? 'player-timer' : 'turn-line-timer';
+      el.className = base + (info.cls ? ' ' + info.cls : '');
+    });
+
+    if (info.ms <= 0 && state && state.phase !== 'gameover') {
+      var now = Date.now();
+      if (App.mode === 'online' && App.net) {
+        if (now - (App.lastTimeoutCheckAt || 0) > 1100) {
+          App.lastTimeoutCheckAt = now;
+          App.net.checkTimeout();
+        }
+      } else if (state.turnLimitMs > 0) {
+        var timedOutName = E.currentPlayer(state).name;
+        if (E.timeoutTurn(state).ok) {
+          App.picked = [];
+          App.discardSel = {};
+          UI.closeModal();
+          UI.toast(t('log.timeout', { p: timedOutName }), 'error');
+          step();
+        }
+      }
+    }
+  }
+
+  function ensureTurnCountdown() {
+    var state = App.state;
+    if (!state || state.phase === 'gameover' || !state.turnLimitMs) {
+      stopTurnCountdown();
+      var topTimer = $('turn-timer');
+      if (topTimer) topTimer.hidden = true;
+      return;
+    }
+    updateTurnTimerDOM();
+    if (!App.countdownTimer) {
+      App.countdownTimer = setInterval(updateTurnTimerDOM, 250);
+    }
+  }
+
   function render() {
     var state = App.state;
     if (!state) return;
@@ -704,6 +848,7 @@
     var isHumanTurn = player.type === 'human' && state.phase !== 'gameover' && canAct();
     var turnOffline = isCurrentSeatOffline();
     var canBotTakeover = turnOffline && App.net && App.net.isHost() && state.phase !== 'gameover';
+    var timerInfo = turnTimerInfo(state);
 
     $('round-chip').textContent = t('game.round', { n: state.round });
     var dot = '<span class="dot" style="background:' + UI.PLAYER_COLORS[state.current % 4] + '"></span>';
@@ -725,19 +870,24 @@
       namedTurn: App.mode === 'multi' && humanCount(state) > 1,
       warning: netWarning(),
       blocked: netBlocked(),
-      turnOffline: turnOffline
+      turnOffline: turnOffline,
+      timerText: timerInfo ? timerInfo.text : null,
+      timerClass: timerInfo ? timerInfo.cls : ''
     });
     UI.renderPlayers($('players'), state, {
       revealIndex: App.mode === 'online' ? viewer : (isHumanTurn ? state.current : -1),
       youIndex: App.mode === 'single' ? 0 : (App.mode === 'online' ? viewer : -1),
       seats: App.mode === 'online' && App.net ? App.net.seats : null,
-      hostId: App.mode === 'online' && App.net ? App.net.hostId : null
+      hostId: App.mode === 'online' && App.net ? App.net.hostId : null,
+      timerText: timerInfo ? timerInfo.text : null,
+      timerClass: timerInfo ? timerInfo.cls : ''
     });
     UI.renderTray($('tray'), state, App.picked, isHumanTurn, viewer, {
       canBotTakeover: canBotTakeover
     });
     $('take-hint').textContent = t('action.takeHint');
     renderChatBadge();
+    ensureTurnCountdown();
 
     if (Tutorial.isActive()) Tutorial.refresh();
   }
@@ -965,6 +1115,37 @@
       App.settings.onlineName = $('online-name').value;
       saveSettings();
     });
+    if ($('online-timer')) {
+      $('online-timer').addEventListener('input', function () {
+        var parsed = readOnlineTimerMinutes();
+        if (parsed !== null) {
+          App.settings.turnTimer = parsed;
+          saveSettings();
+          syncOnlineTimerUI(parsed);
+        } else {
+          syncOnlineTimerUI(-1);
+        }
+      });
+      $('online-timer').addEventListener('blur', function () {
+        var parsed = readOnlineTimerMinutes();
+        if (parsed === null) {
+          var fallback = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+          $('online-timer').value = String(fallback);
+          syncOnlineTimerUI(fallback);
+        }
+      });
+    }
+    if ($('online-timer-presets')) {
+      $('online-timer-presets').addEventListener('click', function (event) {
+        var btn = event.target.closest('.seg-btn');
+        if (!btn) return;
+        var mins = Net.cleanTurnTimer(btn.dataset.mins, 2);
+        App.settings.turnTimer = mins;
+        saveSettings();
+        if ($('online-timer')) $('online-timer').value = String(mins);
+        syncOnlineTimerUI(mins);
+      });
+    }
     $('join-code').addEventListener('input', function () {
       $('join-code').value = Net.normaliseCode($('join-code').value);
     });

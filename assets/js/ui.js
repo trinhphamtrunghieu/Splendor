@@ -16,6 +16,14 @@
     });
   }
 
+  function formatTimer(ms) {
+    if (ms == null || !Number.isFinite(ms)) return '';
+    var totalSec = Math.max(0, Math.ceil(ms / 1000));
+    var mins = Math.floor(totalSec / 60);
+    var secs = totalSec % 60;
+    return (mins < 10 ? '0' + mins : String(mins)) + ':' + (secs < 10 ? '0' + secs : String(secs));
+  }
+
   /* Small contexts (pips, card badges, discount chips) always use the drawing. */
   function gemSvg(color, cls) {
     return Art.gemIcon(color, cls);
@@ -182,6 +190,10 @@
           '<span class="player-dot" style="background:' + PLAYER_COLORS[index % 4] + '"></span>' +
           '<span class="player-name">' + escapeHtml(player.name) + '</span>' +
           (tag ? '<span class="player-tag">' + escapeHtml(tag) + '</span>' : '') +
+          (isCurrent && options.timerText
+            ? '<span class="player-timer' + (options.timerClass ? ' ' + options.timerClass : '') +
+              '" data-turn-timer="1">⏱ ' + escapeHtml(options.timerText) + '</span>'
+            : '') +
           '<span class="player-pts">' + player.points + '</span>' +
         '</div>' +
         '<div class="player-stats">' +
@@ -303,6 +315,10 @@
       '<span class="turn-text">' + label + '</span>' +
       (hint ? '<span class="turn-hint' + (!blocked && opts.warning ? ' is-warning' : '') + '">' +
         hint + '</span>' : '') +
+      (opts.timerText
+        ? '<span class="turn-line-timer' + (opts.timerClass ? ' ' + opts.timerClass : '') +
+          '" data-turn-timer="1">⏱ ' + escapeHtml(opts.timerText) + '</span>'
+        : '') +
       scoreStrip(state, opts.viewer);
   }
 
@@ -740,6 +756,7 @@
     PLAYER_COLORS: PLAYER_COLORS,
     nobleFace: nobleFace,
     escapeHtml: escapeHtml,
+    formatTimer: formatTimer,
     gemSvg: gemSvg,
     gemToken: gemToken,
     renderNobles: renderNobles,
