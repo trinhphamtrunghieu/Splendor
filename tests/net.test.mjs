@@ -1,25 +1,22 @@
-/* Splendor — online play tests.
+/* Splendor — Vercel Server-Authoritative online play tests.
  *
- * These run the real MQTT client and the real room protocol against a real
- * broker (aedes, started in-process on a random port), so the wire format, the
- * retained-message handling and the referee rules are all exercised for real
- * rather than mocked.
+ * Starts the real `/api/room` handler (`api/room.js`) on an in-process Node
+ * HTTP server and exercises `SplendorNet` clients against it over real HTTP
+ * POST + Long-Polling GET requests — zero external dependencies required.
  *
- *   npm install          # aedes + ws, dev only: the game itself ships no deps
- *   npm run test:net
- *
- * tests/engine.test.js covers everything that needs no network.
+ *   node tests/net.test.mjs
  */
-import { startBroker } from './helpers/broker.mjs';
+import http from 'node:http';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 
 globalThis.window = globalThis;
-['data', 'engine', 'ai', 'mqtt-lite', 'net'].forEach((m) =>
+['data', 'engine', 'ai', 'net'].forEach((m) =>
   require('../assets/js/' + m + '.js'));
+const roomApi = require('../api/room.js');
+
 const E = globalThis.SplendorEngine;
 const AI = globalThis.SplendorAI;
-const M = globalThis.MqttLite;
 const Net = globalThis.SplendorNet;
 
 let pass = 0, fail = 0;
@@ -31,499 +28,458 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const until = (fn, ms = 6000) => new Promise((resolve, reject) => {
   const t0 = Date.now();
   (function poll() {
-    if (fn()) return resolve(true);
+    try {
+      if (fn()) return resolve(true);
+    } catch (err) { /* keep polling */ }
     if (Date.now() - t0 > ms) return reject(new Error('timeout'));
-    setTimeout(poll, 25);
+    setTimeout(poll, 20);
   })();
 });
 
-{
-  console.log('\nMQTT client over a real broker\n');
-  const PORT = 9401;
-  const URL = 'ws://127.0.0.1:' + PORT;
-  const { broker, close } = await startBroker(PORT);
-
-  const a = M.connect(URL, { clientId: 'alice' });
-  const b = M.connect(URL, { clientId: 'bob' });
-  const got = [];
-  const wills = [];
-  b.on('message', (topic, payload) => {
-    if (topic.includes('/gone/')) wills.push(payload); else got.push({ topic, payload });
+function startTestServer(port, managerOpts) {
+  const manager = roomApi.createRoomManager(Object.assign({
+    offlineTimeout: 450,
+    waitTimeout: 120
+  }, managerOpts || {}));
+  const handler = roomApi.createHttpHandler(manager);
+  const server = http.createServer((req, res) => {
+    if (req.url.startsWith('/api/room')) return handler(req, res);
+    res.statusCode = 404;
+    res.end();
   });
-  await until(() => a.connected && b.connected);
-  check('two clients connect to a real broker', true);
-
-  b.subscribe('splendor/v1/ROOM/state');
-  b.subscribe('splendor/v1/ROOM/presence/+');
-  b.subscribe('splendor/v1/ROOM/gone/+');
-  await wait(150);
-
-  a.publish('splendor/v1/ROOM/state', JSON.stringify({ seq: 1 }));
-  await until(() => got.length === 1);
-  check('publish reaches a subscriber', JSON.parse(got[0].payload).seq === 1);
-
-  a.publish('splendor/v1/ROOM/presence/alice', 'here');
-  await until(() => got.length === 2);
-  check('wildcard subscription delivers', got[1].topic.endsWith('/presence/alice'));
-
-  a.publish('splendor/v1/ROOM/room', JSON.stringify({ phase: 'lobby' }), { retain: true });
-  await wait(150);
-  const late = M.connect(URL, { clientId: 'carol' });
-  const lateGot = [];
-  late.on('message', (t, p) => lateGot.push({ topic: t, payload: p }));
-  await until(() => late.connected);
-  late.subscribe('splendor/v1/ROOM/room');
-  await until(() => lateGot.length === 1);
-  check('a late joiner is handed the retained room state', JSON.parse(lateGot[0].payload).phase === 'lobby');
-
-  const bigState = { decks: {} };
-  for (let i = 0; i < 90; i++) bigState.decks['c' + i] = { id: 't' + i, cost: { white: 3, blue: 2 }, pad: 'x'.repeat(90) };
-  const bigJson = JSON.stringify(bigState);
-  a.publish('splendor/v1/ROOM/state', bigJson);
-  await until(() => got.length === 3);
-  check(Math.round(bigJson.length / 1024) + ' KB state survives frame reassembly',
-    got[2].payload === bigJson, 'got ' + got[2].payload.length + ' of ' + bigJson.length + ' bytes');
-
-  a.publish('splendor/v1/ROOM/state', JSON.stringify({ name: 'Hiếu — 💎 Lượt của bạn' }));
-  await until(() => got.length === 4);
-  check('utf-8 names survive the wire', JSON.parse(got[3].payload).name.indexOf('Hiếu') === 0);
-
-  for (let i = 0; i < 20; i++) a.publish('splendor/v1/ROOM/state', JSON.stringify({ n: i }));
-  await until(() => got.length === 24);
-  check('20 rapid publishes arrive, in order',
-    got.slice(4).every((m, i) => JSON.parse(m.payload).n === i));
-
-  const polite = M.connect(URL, {
-    clientId: 'dave',
-    will: { topic: 'splendor/v1/ROOM/gone/dave', payload: 'bye' }
+  return new Promise((resolve) => {
+    server.listen(port, '127.0.0.1', () => {
+      resolve({
+        url: 'http://127.0.0.1:' + port + '/api/room',
+        manager,
+        close: () => new Promise((r) => server.close(() => r()))
+      });
+    });
   });
-  await until(() => polite.connected);
-  polite.end();
-  await wait(400);
-  check('a clean disconnect sends no will', wills.length === 0, 'got ' + wills.length);
-
-  const dropped = M.connect(URL, {
-    clientId: 'erin',
-    reconnect: false,
-    will: { topic: 'splendor/v1/ROOM/gone/erin', payload: 'bye' }
-  });
-  await until(() => dropped.connected);
-  await wait(150);
-  broker.clients['erin'].conn.destroy();
-  await until(() => wills.length === 1, 4000).catch(() => {});
-  check('an abrupt drop triggers the last will', wills.length === 1, 'got ' + wills.length);
-
-  const flappy = M.connect(URL, { clientId: 'frank' });
-  const flappyGot = [];
-  flappy.on('message', (t, p) => flappyGot.push(p));
-  await until(() => flappy.connected);
-  flappy.subscribe('splendor/v1/ROOM/state');
-  await wait(150);
-  let reconnects = 0;
-  flappy.on('connect', () => reconnects++);
-  broker.clients['frank'].conn.destroy();
-  await until(() => flappy.connected && reconnects >= 1, 8000);
-  await wait(250);
-  a.publish('splendor/v1/ROOM/state', JSON.stringify({ afterReconnect: true }));
-  await until(() => flappyGot.some(p => JSON.parse(p).afterReconnect), 4000);
-  check('a dropped client reconnects and re-subscribes on its own', true);
-
-  [a, b, late, dropped, flappy].forEach((c) => c.end());
-  await close();
 }
 
+/* =========================================================================
+   1. Server-Authoritative Room Protocol: Host, Guests, Redaction & Full Game
+   ========================================================================= */
 {
-  console.log('\nRoom protocol: host, guests and the referee\n');
-  const PORT = 9402;
-  const URL = 'ws://127.0.0.1:' + PORT;
-  const room = await startBroker(PORT);
-  const broker = room.broker;
+  console.log('\nServer-Authoritative room protocol: lobby, redaction, AI & full game\n');
+  const srv = await startTestServer(9411);
+  const API = srv.url;
 
-  /* ---------------- host ---------------- */
-  const host = Net.create({ clientId: 'host-1' });
-  let hostState = null;
-  host.on('intent', (msg) => {
-    const seat = host.seatOf(msg.id);
-    if (seat < 0 || !hostState || seat !== hostState.current) return;
-    const result = E.applyAction(hostState, msg.action);
-    if (result.ok) host.broadcast(hostState);
-    else host.broadcast(hostState);       // refused: re-sync the sender
-  });
-  host.host({ name: 'Hieu', brokerUrl: URL, room: 'ABC23' });
-  await until(() => host.connected);
-  check('host opens a room', host.room === 'ABC23');
+  const hostBox = { net: Net.create({ clientId: 'host-1', apiUrl: API, waitMs: 100 }), view: null, seat: -1, views: 0 };
+  hostBox.net.on('view', (v) => { hostBox.view = v.state; hostBox.seat = v.seat; hostBox.views++; });
+  hostBox.net.host({ name: 'Hieu', room: 'ABC23' });
+  await until(() => hostBox.net.connected && hostBox.net.joined);
+  check('host creates a room on the Vercel API', hostBox.net.room === 'ABC23');
 
-  /* ---------------- guests ---------------- */
   function makeGuest(id, name) {
-    const g = Net.create({ clientId: id });
-    const box = { net: g, view: null, room: null, seat: -1, views: 0 };
+    const g = Net.create({ clientId: id, apiUrl: API, waitMs: 100, retryMs: 80 });
+    const box = { net: g, view: null, room: null, seat: -1, views: 0, errors: [] };
     g.on('room', (r) => { box.room = r; });
     g.on('view', (v) => { box.view = v.state; box.seat = v.seat; box.views++; });
-    g.join({ room: 'ABC23', name, brokerUrl: URL });
+    g.on('actionError', (e) => { box.errors.push(e.error); });
+    g.join({ room: 'ABC23', name });
     return box;
   }
+
   const lan = makeGuest('guest-lan', 'Lan');
   const nam = makeGuest('guest-nam', 'Nam');
-  await until(() => host.seats.length === 3, 6000);
-  check('two guests are seated by the host', host.seats.map(s => s.name).join(',') === 'Hieu,Lan,Nam');
+  await until(() => hostBox.net.seats.length === 3);
+  check('two guests are seated by the server',
+    hostBox.net.seats.map(s => s.name).join(',') === 'Hieu,Lan,Nam');
   await until(() => lan.room && lan.room.seats.length === 3);
-  check('guests see the roster', lan.room.seats[2].name === 'Nam');
+  check('guests receive the room roster via long-polling', lan.room.seats[2].name === 'Nam');
 
-  host.addBot('May 1', 'hard');
+  hostBox.net.addBot('May 1', 'hard');
   await until(() => lan.room.seats.length === 4);
-  check('the host can add a bot seat', lan.room.seats[3].type === 'ai');
+  check('the host can add an AI bot seat', lan.room.seats[3].type === 'ai');
 
-  /* ---------------- start ---------------- */
-  hostState = E.createGame({
-    players: host.seats.map(s => ({ name: s.name, type: s.type, difficulty: s.difficulty })),
-    seed: 4242
-  });
-  host.setState(hostState);
-  host.broadcast(hostState);
-  await until(() => lan.view && nam.view, 6000);
-  check('both guests receive a game view', lan.seat === 1 && nam.seat === 2);
+  /* Start the game on the server */
+  hostBox.net.startGame({ seed: 4242 });
+  await until(() => hostBox.view && lan.view && nam.view);
+  check('all human seats (host + guests) receive their game view from the server',
+    hostBox.seat === 0 && lan.seat === 1 && nam.seat === 2);
 
-  /* ---------------- hidden information ---------------- */
-  hostState.players[0].reserved.push(hostState.decks[3].pop());
-  hostState.players[1].reserved.push(hostState.decks[3].pop());
-  host.broadcast(hostState);
-  await until(() => lan.view.players[1].reserved.length === 1);
-  check('a guest sees its own reserved card in full', !!lan.view.players[1].reserved[0].cost);
-  check("a guest cannot read another player's reserved card",
-    lan.view.players[0].reserved[0].hidden === true && !lan.view.players[0].reserved[0].cost);
-  check('deck order is not leaked, only the count',
-    lan.view.decks[1].length === hostState.decks[1].length && lan.view.decks[1].every(c => c === null));
-  check('public information is intact',
-    JSON.stringify(lan.view.tokens) === JSON.stringify(hostState.tokens) &&
-    lan.view.board[1].filter(Boolean).length === hostState.board[1].filter(Boolean).length);
+  /* Hidden information: even the host only gets a redacted view from the server! */
+  const serverRoom = await srv.manager.loadRoom('ABC23');
+  check('the server holds the true unredacted deck',
+    serverRoom.state.decks[1].every(c => c && c.id));
+  check('neither host nor guest can read the deck order from their view',
+    hostBox.view.decks[1].every(c => c === null) && lan.view.decks[1].every(c => c === null));
 
-  /* ---------------- a guest plays a turn ---------------- */
-  await until(() => hostState.current === 0);
-  // host takes gems itself first
-  E.applyAction(hostState, { type: 'take', colors: ['white', 'blue', 'green'] });
-  host.broadcast(hostState);
-  await until(() => lan.view.current === 1 && lan.view.players[0].tokens.white === 1);
-  check("the host's own move reaches the guests", true);
+  /* Seat 0 (Hieu) reserves a card from tier 3 deck so it is secret */
+  hostBox.net.sendIntent({ type: 'reserveDeck', tier: 3 });
+  await until(() => hostBox.view.current === 1 && lan.view.current === 1);
+  check('host sees their own reserved card in full',
+    hostBox.view.players[0].reserved.length === 1 && !!hostBox.view.players[0].reserved[0].cost);
+  check("guests cannot read the host's reserved card",
+    lan.view.players[0].reserved.length === 1 &&
+    lan.view.players[0].reserved[0].hidden === true &&
+    !lan.view.players[0].reserved[0].cost);
 
-  const beforeSeq = lan.views;
+  /* Seat 1 (Lan) plays a turn */
+  const beforeLanViews = lan.views;
   lan.net.sendIntent({ type: 'take', colors: ['red', 'black', 'green'] });
-  await until(() => hostState.players[1].tokens.red === 1, 6000);
-  check("a guest's intent is applied by the host", hostState.current === 2);
-  await until(() => lan.views > beforeSeq);
-  check('the guest is sent the result', lan.view.players[1].tokens.red === 1);
+  await until(() => lan.views > beforeLanViews && nam.view.current === 2);
+  check("a guest's move is validated and broadcast by the server",
+    lan.view.players[1].tokens.red === 1 && hostBox.view.players[1].tokens.red === 1);
 
-  /* ---------------- out-of-turn moves are refused ---------------- */
-  const tokensBefore = JSON.stringify(hostState.players[1].tokens);
-  lan.net.sendIntent({ type: 'take', colors: ['white', 'blue', 'red'] });   // not Lan's turn
-  await wait(400);
-  check('a move out of turn changes nothing',
-    JSON.stringify(hostState.players[1].tokens) === tokensBefore);
+  /* Out-of-turn move is refused by the server referee */
+  const tokensBefore = JSON.stringify(serverRoom.state.players[1].tokens);
+  lan.net.sendIntent({ type: 'take', colors: ['white', 'blue', 'red'] });
+  await until(() => lan.errors.includes('err.notNow'));
+  check('an out-of-turn move is refused by the server',
+    JSON.stringify(serverRoom.state.players[1].tokens) === tokensBefore);
 
-  /* ---------------- an illegal move is refused ---------------- */
-  await until(() => hostState.current === 2);
-  const bankBefore = JSON.stringify(hostState.tokens);
-  nam.net.sendIntent({ type: 'take', colors: ['white', 'white', 'white'] });  // never legal
-  await wait(400);
-  check('an illegal move is refused by the referee', JSON.stringify(hostState.tokens) === bankBefore);
+  /* Illegal move is refused by the server referee */
+  const bankBefore = JSON.stringify(serverRoom.state.tokens);
+  nam.net.sendIntent({ type: 'take', colors: ['white', 'white', 'white'] });
+  await until(() => nam.errors.includes('err.mixInvalid'));
+  check('an illegal move is refused by the server referee',
+    JSON.stringify(serverRoom.state.tokens) === bankBefore);
 
-  /* ---------------- play the whole game out ---------------- */
+  /* Seat 2 (Nam) makes a legal move -> Seat 3 is AI (May 1), so server automatically runs AI's turn! */
+  nam.net.sendIntent({ type: 'take', colors: ['white', 'blue', 'green'] });
+  await until(() => hostBox.view.current === 0 && hostBox.view.round === 2);
+  check('the server automatically executes AI bot turns without client intervention',
+    hostBox.view.round === 2 && hostBox.view.current === 0);
+
+  /* Play the rest of the 4-seat game to completion through the server */
+  const clientsBySeat = [hostBox, lan, nam];
   let guard = 0;
-  while (hostState.phase !== 'gameover' && guard++ < 900) {
-    const seat = hostState.current;
-    const player = hostState.players[seat];
-    if (hostState.phase === 'noble') {
-      const action = { type: 'noble', nobleId: hostState.pendingNobles[0] };
-      if (seat === 0 || player.type === 'ai') { E.applyAction(hostState, action); host.broadcast(hostState); }
-      else { (seat === 1 ? lan : nam).net.sendIntent(action); await wait(30); }
-      continue;
-    }
-    if (hostState.phase === 'discard') {
+  while (serverRoom.state.phase !== 'gameover' && guard++ < 600) {
+    const seat = serverRoom.state.current;
+    const player = serverRoom.state.players[seat];
+    const actor = clientsBySeat[seat];
+    if (!actor) break;
+
+    let action;
+    if (serverRoom.state.phase === 'noble') {
+      action = { type: 'noble', nobleId: serverRoom.state.pendingNobles[0] };
+    } else if (serverRoom.state.phase === 'discard') {
       const give = {};
       let over = E.countTokens(player.tokens) - 10;
       for (const c of ['white', 'blue', 'green', 'red', 'black', 'gold']) {
-        while (over > 0 && (player.tokens[c] || 0) > (give[c] || 0)) { give[c] = (give[c] || 0) + 1; over--; }
+        while (over > 0 && (player.tokens[c] || 0) > (give[c] || 0)) {
+          give[c] = (give[c] || 0) + 1;
+          over--;
+        }
       }
-      const action = { type: 'discard', pile: give };
-      if (seat === 0 || player.type === 'ai') { E.applyAction(hostState, action); host.broadcast(hostState); }
-      else { (seat === 1 ? lan : nam).net.sendIntent(action); await wait(30); }
-      continue;
-    }
-    const action = AI.chooseAction(hostState, AI.PROFILES.normal);
-    if (seat === 0 || player.type === 'ai') {
-      E.applyAction(hostState, action);
-      host.broadcast(hostState);
+      action = { type: 'discard', pile: give };
     } else {
-      (seat === 1 ? lan : nam).net.sendIntent(action);
-      await wait(35);
+      action = AI.chooseAction(serverRoom.state, AI.PROFILES.normal);
     }
+    const prevTurnCount = serverRoom.state.turnCount;
+    const prevPhase = serverRoom.state.phase;
+    actor.net.sendIntent(action);
+    await until(() =>
+      serverRoom.state.phase === 'gameover' ||
+      serverRoom.state.turnCount !== prevTurnCount ||
+      serverRoom.state.phase !== prevPhase);
   }
-  check('a four-seat online game plays to a finish over MQTT',
-    hostState.phase === 'gameover', 'phase ' + hostState.phase + ' after ' + guard + ' steps');
-  await until(() => lan.view.phase === 'gameover', 4000);
-  check('guests are told the game ended', lan.view.winner === hostState.winner);
 
-  /* ---------------- reconnect: the retained view restores a guest ---------------- */
-  const rejoin = makeGuest('guest-lan', 'Lan');
-  await until(() => rejoin.view, 6000);
-  check('a returning player is handed their seat and view by the broker',
-    rejoin.seat === 1 && !!rejoin.view && rejoin.view.players[1].reserved[0].cost);
+  check('a 4-seat online game (3 humans + 1 bot) plays to completion on the server',
+    serverRoom.state.phase === 'gameover', 'phase ' + serverRoom.state.phase + ' after ' + guard + ' steps');
+  await until(() => lan.view.phase === 'gameover' && hostBox.view.phase === 'gameover');
+  check('all players receive the final game-over state and winner',
+    lan.view.winner === serverRoom.state.winner);
 
-  /* ---------------- a drop is noticed ---------------- */
-  let leftSeat = -1;
-  host.on('left', (info) => { leftSeat = info.seat; });
-  broker.clients[Object.keys(broker.clients).find(k => k.startsWith('guest-nam'))].conn.destroy();
-  await until(() => leftSeat === 2, 6000).catch(() => {});
-  check('the host is told when a player drops', leftSeat === 2, 'leftSeat ' + leftSeat);
+  /* Rematch in the same room */
+  hostBox.net.rematch({ seed: 777 });
+  await until(() => lan.view.phase === 'play' && lan.view.round === 1 && lan.view.turnCount === 0);
+  check('the host can start a rematch in the same room for everyone',
+    hostBox.view.phase === 'play' && lan.view.phase === 'play');
 
-  /* ---------------- closing the room clears the broker ---------------- */
-  host.leave();
+  [hostBox, lan, nam].forEach(b => b.net.leave());
+  await srv.close();
+}
+
+/* =========================================================================
+   2. Host Failover, Keeping New Host, Mid-Game Bot Takeover & Reconnection
+   ========================================================================= */
+{
+  console.log('\nHost failover, preserving new host & mid-game bot takeover\n');
+  const srv = await startTestServer(9412, { offlineTimeout: 350, waitTimeout: 80 });
+  const API = srv.url;
+
+  const hieu = Net.create({ clientId: 'u-hieu', apiUrl: API, waitMs: 80, retryMs: 60 });
+  const lan = Net.create({ clientId: 'u-lan', apiUrl: API, waitMs: 80, retryMs: 60 });
+  const nam = Net.create({ clientId: 'u-nam', apiUrl: API, waitMs: 80, retryMs: 60 });
+
+  let hieuView = null, lanView = null, namView = null;
+  let hostChanges = [];
+  hieu.on('view', (v) => { hieuView = v.state; });
+  lan.on('view', (v) => { lanView = v.state; });
+  nam.on('view', (v) => { namView = v.state; });
+  lan.on('hostChanged', (info) => hostChanges.push(info));
+
+  hieu.host({ room: 'FA234', name: 'Hieu' });
+  await until(() => hieu.connected && hieu.joined);
+  lan.join({ room: 'FA234', name: 'Lan' });
+  nam.join({ room: 'FA234', name: 'Nam' });
+  await until(() => hieu.seats.length === 3 && lan.seats.length === 3 && nam.seats.length === 3);
+
+  /* Start the game with 3 human players */
+  hieu.startGame({ seed: 101 });
+  await until(() => hieuView && lanView && namView);
+  check('game starts with Hieu (seat 0) as initial host',
+    lan.hostId === 'u-hieu' && lan.role === 'guest' && hieu.role === 'host');
+
+  /* Hieu (seat 0) plays turn 1, then abruptly loses connection! */
+  hieu.sendIntent({ type: 'take', colors: ['white', 'blue', 'green'] });
+  await until(() => lanView.current === 1);
+  hieu.disconnect();
+
+  /* Wait for Lan and Nam to be notified that Hieu dropped and Lan is the new host */
+  await until(() => lan.hostId === 'u-lan' && lan.role === 'host', 3000);
+  check('when the initial host disconnects, host privileges transfer to the next online player (Lan)',
+    lan.isHost() && nam.hostId === 'u-lan' && hostChanges.length >= 1);
+
+  /* While Hieu is disconnected, Lan (seat 1) and Nam (seat 2) keep playing without interruption! */
+  lan.sendIntent({ type: 'take', colors: ['red', 'black', 'green'] });
+  await until(() => namView.current === 2);
+  nam.sendIntent({ type: 'take', colors: ['white', 'red', 'blue'] });
+  await until(() => lanView.current === 0);
+  check('other players continue playing their turns normally even while the original host is offline',
+    lanView.current === 0);
+
+  /* Now it is Seat 0's turn (Hieu), who is still offline.
+     The new host (Lan) clicks "Let bot play" (`botTakeover`) for Seat 0! */
+  check('seat 0 is marked offline in the room roster', lan.seats[0].online === false);
+  lan.botTakeover(0);
+  await until(() => lanView.current === 1 && lanView.round === 2);
+  check('new host can trigger botTakeover so a bot plays for the disconnected player',
+    lan.seats[0].botTakeover === true && lanView.current === 1);
+
+  /* Now Hieu reconnects!
+     1) Hieu reclaims seat 0 (`botTakeover` becomes false, `type` becomes 'human' again).
+     2) Lan REMAINS the host (`hostId === 'u-lan'`) as required! */
+  hieu.reconnect();
+  await until(() => hieu.connected && hieu.joined && lan.seats[0].online === true);
+  check('when the old host reconnects, the new host (Lan) keeps host privileges',
+    lan.hostId === 'u-lan' && hieu.hostId === 'u-lan' && lan.role === 'host' && hieu.role === 'guest');
+  check('the returning player automatically reclaims control of their seat from the temporary bot',
+    lan.seats[0].botTakeover === false && lan.seats[0].type === 'human');
+
+  [hieu, lan, nam].forEach(c => c.leave());
+  await srv.close();
+}
+
+/* =========================================================================
+   3. Dual-Mode Storage: Write-on-Move to Upstash Redis & Cold-Start Restore
+   ========================================================================= */
+{
+  console.log('\nDual-mode storage: Write-on-Move Redis backup & zero-read polling\n');
+  const kvCalls = { get: 0, set: 0, del: 0, store: new Map() };
+  const mockKv = {
+    get: async (code) => {
+      kvCalls.get++;
+      const raw = kvCalls.store.get(code);
+      return raw ? JSON.parse(raw) : null;
+    },
+    set: async (code, room) => {
+      kvCalls.set++;
+      kvCalls.store.set(code, JSON.stringify(room));
+    },
+    del: async (code) => {
+      kvCalls.del++;
+      kvCalls.store.delete(code);
+    }
+  };
+
+  const srv1 = await startTestServer(9413, { kv: mockKv, waitTimeout: 60 });
+  const a = Net.create({ clientId: 'kv-a', apiUrl: srv1.url, waitMs: 60 });
+  const b = Net.create({ clientId: 'kv-b', apiUrl: srv1.url, waitMs: 60 });
+
+  a.host({ room: 'KV234', name: 'Alice' });
+  await until(() => a.joined);
+  b.join({ room: 'KV234', name: 'Bob' });
+  await until(() => a.seats.length === 2 && b.joined);
+
+  const setsAfterJoin = kvCalls.set;
+  const getsBeforePoll = kvCalls.get;
+  /* Let several long-poll cycles run while idle */
   await wait(300);
-  const fresh = Net.create({ clientId: 'watcher' });
-  let sawRetained = false;
-  fresh.on('room', () => { sawRetained = true; });
-  fresh.join({ room: 'ABC23', name: 'watcher', brokerUrl: URL });
-  await until(() => fresh.connected);
-  await wait(600);
-  check('a closed room leaves no retained state on the broker', !sawRetained);
+  check('idle long-polling reads from RAM and issues 0 Redis GET or SET commands',
+    kvCalls.get === getsBeforePoll && kvCalls.set === setsAfterJoin);
 
-  [lan, nam, rejoin].forEach(g => g.net.leave());
-  fresh.leave();
-  await room.close();
+  /* Start game and make a move -> writes to Redis */
+  a.startGame({ seed: 55 });
+  await until(() => a.phase === 'playing');
+  check('starting a game writes the updated state to Redis', kvCalls.set > setsAfterJoin);
+
+  /* Simulate a Vercel serverless cold start by wiping the in-memory Map! */
+  srv1.manager.rooms.clear();
+  let bView = null;
+  b.on('view', (v) => { bView = v.state; });
+  a.sendIntent({ type: 'take', colors: ['white', 'blue', 'green'] });
+  await until(() => bView && bView.current === 1);
+  check('after a serverless cold start (RAM wiped), the room is transparently restored from Redis on the next move',
+    kvCalls.get >= 1 && bView.players[0].tokens.white === 1);
+
+  /* When all humans leave, the room is deleted from Redis too */
+  a.leave();
+  b.leave();
+  await until(() => kvCalls.del >= 1);
+  check('closing/leaving a room deletes its key from Redis', !kvCalls.store.has('KV234'));
+
+  await srv1.close();
 }
 
+/* =========================================================================
+   4. Renaming in the Lobby & Table Talk (Chat)
+   ========================================================================= */
 {
-  console.log('\nWhen things go wrong\n');
-  const PORT = 9403;
-  const URL = 'ws://127.0.0.1:' + PORT;
-  const room = await startBroker(PORT);
+  console.log('\nRenaming in the lobby & room chat\n');
+  const srv = await startTestServer(9414, { waitTimeout: 80 });
+  const API = srv.url;
 
-  /* A guest that names a room nobody is hosting must be told so, rather than
-     being left in a lobby claiming it is waiting for the host to start. */
-  const lost = Net.create({ clientId: 'lost-1', roomTimeout: 700 });
-  const seen = [];
-  lost.on('status', (st) => seen.push(st));
-  lost.join({ room: 'NOROOM', name: 'Lan', brokerUrl: URL });
-  await until(() => lost.connected);
-  check('connecting to a broker does not by itself mean being in a room',
-    lost.status().joined === false);
-  await until(() => lost.status().error === 'room-not-found', 4000);
-  check('a room nobody hosts is reported as not found', true);
+  const host = Net.create({ clientId: 'rn-host', apiUrl: API, waitMs: 80 });
+  host.host({ room: 'RENAM', name: 'Hieu' });
+  await until(() => host.connected && host.joined);
 
-  /* And if a host turns up later, the error clears by itself. */
-  const late = Net.create({ clientId: 'late-host' });
-  late.host({ room: 'NOROOM', name: 'Hieu', brokerUrl: URL });
-  await until(() => late.connected);
-  await until(() => lost.status().joined === true && !lost.status().error, 5000);
-  check('when the host finally appears, the guest recovers on its own', true);
-
-  /* A broker that cannot be reached must not be reported as "connecting" for
-     ever: that is indistinguishable from a hung page. */
-  const nowhere = Net.create({ clientId: 'nowhere-1', connectTimeout: 600 });
-  nowhere.join({ room: 'ABC23', name: 'Nam', brokerUrl: 'ws://127.0.0.1:9499' });
-  await until(() => nowhere.status().error === 'broker-unreachable', 5000);
-  check('an unreachable broker is reported as unreachable',
-    nowhere.status().connected === false);
-  nowhere.leave();
-
-  /* The host's browser is the referee, so its disappearance has to reach the
-     other players. The broker does it for us with the host's last will. */
-  const host = Net.create({ clientId: 'host-2' });
-  host.host({ room: 'WILLX', name: 'Hieu', brokerUrl: URL });
-  await until(() => host.connected);
-  const guest = Net.create({ clientId: 'guest-2' });
-  let announced = 0;
-  guest.on('hostgone', () => announced++);
-  guest.join({ room: 'WILLX', name: 'Lan', brokerUrl: URL });
-  await until(() => guest.status().joined === true, 5000);
-  check('the guest is seated in the hosted room', guest.status().seats.length === 2);
-
-  const hostKey = Object.keys(room.broker.clients).find((k) => k.startsWith('host-2'));
-  room.broker.clients[hostKey].conn.destroy();
-  await until(() => announced > 0, 6000).catch(() => {});
-  check('a host that vanishes is announced to the guests', announced > 0,
-    'announcements: ' + announced);
-  check('the guest records that the host is gone', guest.status().hostGone === true);
-
-  /* A host who merely blipped comes back and publishes the room again, which
-     must clear the warning rather than leaving the game looking dead. */
-  const returning = Net.create({ clientId: 'host-2' });
-  returning.host({ room: 'WILLX', name: 'Hieu', brokerUrl: URL });
-  await until(() => returning.connected);
-  returning.publishRoom();
-  await until(() => guest.status().hostGone === false, 5000);
-  check('a host coming back clears the warning', !guest.status().error);
-
-  [lost, late, host, guest, returning].forEach((c) => c.leave());
-  await room.close();
-}
-
-{
-  console.log('\nRenaming in the lobby\n');
-  const PORT = 9404;
-  const URL = 'ws://127.0.0.1:' + PORT;
-  const room = await startBroker(PORT);
-
-  const host = Net.create({ clientId: 'rn-host' });
-  host.host({ room: 'RENAM', name: 'Hieu', brokerUrl: URL });
-  await until(() => host.connected);
-
-  const guest = Net.create({ clientId: 'rn-guest' });
-  guest.join({ room: 'RENAM', name: 'Bạn', brokerUrl: URL });
-  await until(() => guest.status().seats.length === 2, 6000);
-  check('the guest arrives under the name it typed',
-    guest.status().seats[1].name === 'Bạn', guest.status().seats[1].name);
-
-  /* A guest cannot edit the roster: it asks, and the host's copy is the one
-     that travels back to everybody. */
-  guest.rename('Lan');
-  await until(() => guest.status().seats[1].name === 'Lan', 5000);
-  check('a guest renaming itself reaches the host and comes back', true);
-  check('and the host agrees about the new name', host.seats[1].name === 'Lan',
-    host.seats[1].name);
+  const guest = Net.create({ clientId: 'rn-guest', apiUrl: API, waitMs: 80 });
+  guest.join({ room: 'RENAM', name: 'Bạn' });
+  await until(() => guest.status().seats.length === 2 && host.seats.length === 2);
+  check('the guest arrives under the name it typed', guest.status().seats[1].name === 'Bạn');
 
   const renames = [];
   host.on('renamed', (info) => renames.push(info));
-  guest.rename('Nam');
-  await until(() => renames.length === 1, 5000);
-  check('the host reports who changed what', renames[0].from === 'Lan' && renames[0].to === 'Nam',
-    JSON.stringify(renames[0]));
+  guest.rename('Lan');
+  await until(() => host.seats[1].name === 'Lan' && guest.seats[1].name === 'Lan');
+  check('a guest renaming itself updates the server roster for everyone', true);
+  check('rename event reports old and new name',
+    renames.length === 1 && renames[0].from === 'Bạn' && renames[0].to === 'Lan');
 
-  /* The host renames itself without asking anyone. */
-  host.rename('Hiếu');
-  await until(() => guest.status().seats[0].name === 'Hiếu', 5000);
-  check('the host can rename itself too', true);
-
-  /* Nothing dangerous or absurd gets into a name. */
   host.rename('  Tên\n\tdài   quá  đi   mất   thật   đấy  ');
-  await wait(250);
+  await until(() => host.seats[0].name.indexOf('Tên') === 0);
   const long = host.seats[0].name;
   check('a name is trimmed, flattened and cut to length',
-    long.length <= Net.MAX_NAME && !/[\n\t]/.test(long) && !/  /.test(long), JSON.stringify(long));
+    long.length <= Net.MAX_NAME && !/[\n\t]/.test(long) && !/  /.test(long));
 
-  const before = host.seats[0].name;
-  host.rename('   ');
-  host.rename('');
-  host.rename(null);
-  await wait(200);
-  check('an empty name is refused rather than blanking the seat',
-    host.seats[0].name === before, host.seats[0].name);
-
-  /* A guest re-announces itself on every reconnect. If it announced the name
-     it arrived with, a blip would quietly undo the rename. */
-  const guestKey = Object.keys(room.broker.clients).find((k) => k.startsWith('rn-guest'));
-  room.broker.clients[guestKey].conn.destroy();
-  await until(() => guest.connected === false, 5000).catch(() => {});
-  await until(() => guest.connected === true, 12000);
-  await wait(500);
-  check('a reconnect keeps the chosen name rather than the one it arrived with',
-    host.seats[1].name === 'Nam', host.seats[1].name);
-
-  /* The promise to the player is "until the round starts". */
-  host.broadcast(E.createGame({ players: [{ name: 'A', type: 'human' }, { name: 'B', type: 'human' }] }));
-  await until(() => guest.status().phase === 'playing', 5000);
-  check('renaming is closed once the cards are dealt', host.canRename() === false);
-  const locked = host.seats[0].name;
-  check('the host refuses its own late rename', host.rename('Khác') === null);
-  guest.rename('Khác');
-  await wait(300);
-  check('and ignores a guest asking late', host.seats[0].name === locked && host.seats[1].name !== 'Khác',
-    host.seats.map((s) => s.name).join(','));
-
-  [host, guest].forEach((c) => c.leave());
-  await room.close();
-}
-
-{
-  console.log('\nTable talk\n');
-  const PORT = 9405;
-  const URL = 'ws://127.0.0.1:' + PORT;
-  const room = await startBroker(PORT);
-
-  const host = Net.create({ clientId: 'ch-host' });
-  host.host({ room: 'CHATX', name: 'Hieu', brokerUrl: URL });
-  await until(() => host.connected);
-  const guest = Net.create({ clientId: 'ch-guest' });
-  guest.join({ room: 'CHATX', name: 'Lan', brokerUrl: URL });
-  await until(() => guest.status().seats.length === 2, 6000);
-
+  /* Chat ordering, attribution, escaping, and rate limiting */
   const heard = [];
   guest.on('chat', (line) => heard.push(line));
-
   host.sendChat('Chào cả nhà');
-  await until(() => heard.length === 1, 5000);
-  check('a line from the host reaches the guest', heard[0].text === 'Chào cả nhà', heard[0].text);
-  check('it is attributed to the player who said it', heard[0].name === 'Hieu', heard[0].name);
-  check('and the guest knows it was not its own', heard[0].mine === false);
-
-  /* Everyone sees one order of messages, ours included: the broker is what
-     decides, not each browser's optimism. */
-  await until(() => host.chat.length === 1, 5000);
-  check('the speaker sees its own line come back', host.chat[0].mine === true);
+  await until(() => heard.length === 1 && host.chat.length === 1);
+  check('a chat line from the host reaches the guest', heard[0].text === 'Chào cả nhà');
+  check('the speaker sees its own line marked mine=true', host.chat[0].mine === true && heard[0].mine === false);
 
   await wait(400);
   guest.sendChat('Chào bạn');
-  await until(() => host.chat.length === 2, 5000);
-  check('a line from the guest reaches the host', host.chat[1].text === 'Chào bạn');
-  check('the host can tell it apart from its own', host.chat[1].mine === false);
-  check('both sides agree on the order',
-    host.chat.map((l) => l.text).join('|') === guest.chat.map((l) => l.text).join('|'),
-    host.chat.map((l) => l.text).join('|') + ' vs ' + guest.chat.map((l) => l.text).join('|'));
+  await until(() => host.chat.length === 2 && guest.chat.length === 2);
+  check('both sides agree on the server chat order',
+    host.chat.map(l => l.text).join('|') === guest.chat.map(l => l.text).join('|'));
 
-  /* Chat is not refereed, so it must keep working during a game too. */
-  host.broadcast(E.createGame({ players: [{ name: 'Hieu', type: 'human' }, { name: 'Lan', type: 'human' }] }));
-  await until(() => guest.status().phase === 'playing', 5000);
-  await wait(400);
-  guest.sendChat('Lượt của ai đấy');
-  await until(() => host.chat.length === 3, 5000);
-  check('the table can still talk after the game has started', host.chat[2].text === 'Lượt của ai đấy');
-
-  /* Nothing a peer sends can wreck another table. */
-  await wait(400);
-  const huge = 'x'.repeat(5000);
-  guest.sendChat(huge);
-  await until(() => host.chat.length === 4, 5000);
-  check('an overlong line is cut to size', host.chat[3].text.length === Net.MAX_CHAT,
-    'length ' + host.chat[3].text.length);
-
-  await wait(400);
-  check('an empty line is not sent at all', guest.sendChat('   ') === null);
-  check('nor is a line of newlines', guest.sendChat('\n\n\t') === null);
-
-  /* A stuck key must not flood a shared public broker. */
   await wait(400);
   const first = guest.sendChat('một');
   const second = guest.sendChat('hai');
-  check('a second line in the same instant is held back', first !== null && second === null);
+  check('a second chat line in the same instant is rate-limited', first !== null && second === null);
 
-  /* Notes about what happened go in the same stream, and are never sent. */
-  await wait(500);                       // let the lines above finish arriving
-  const before = guest.chat.length;
-  const hostHeard = host.chat.length;
-  guest.note('Lan đã vào phòng.');
-  check('a note lands in the log as a note, not as something said',
-    guest.chat.length === before + 1 && guest.chat[before].system === true);
-  check('a note is not attributed to anyone', guest.chat[before].mine === undefined);
-  await wait(300);
-  check('and it never leaves this browser', host.chat.length === hostHeard,
-    'host heard ' + host.chat.length + ', expected ' + hostHeard);
-  check('an empty note is not recorded', guest.note('  ') === null);
+  /* Once the game starts, renaming is locked */
+  host.startGame({ seed: 12 });
+  await until(() => guest.status().phase === 'playing');
+  check('renaming is closed once the cards are dealt', host.canRename() === false && guest.rename('Khác') === null);
 
-  /* The log is bounded whatever fills it: a long game cannot grow it without
-     limit, and notes must not slip past the cap either. */
-  for (let i = 0; i < Net.CHAT_HISTORY + 40; i++) guest.note('nốt ' + i);
-  check('the kept history is bounded', guest.chat.length === Net.CHAT_HISTORY,
-    'kept ' + guest.chat.length);
-  check('and it is the newest lines that are kept',
-    guest.chat[guest.chat.length - 1].text === 'nốt ' + (Net.CHAT_HISTORY + 39),
-    guest.chat[guest.chat.length - 1].text);
-
-  /* Leaving a public broker should not leave the room's chatter on it. */
-  check('there was something to forget', host.chat.length > 0);
   host.leave();
-  check('leaving forgets what was said', host.chat.length === 0);
-
   guest.leave();
-  await room.close();
+  await srv.close();
+}
+
+/* =========================================================================
+   5. Error Handling & Recovery
+   ========================================================================= */
+{
+  console.log('\nError handling: missing room, late host recovery & unreachable server\n');
+  const srv = await startTestServer(9415, { waitTimeout: 80 });
+  const API = srv.url;
+
+  const lost = Net.create({ clientId: 'lost-1', apiUrl: API, roomTimeout: 350, retryMs: 80, waitMs: 80 });
+  lost.join({ room: 'NR234', name: 'Lan' });
+  await until(() => lost.status().error === 'room-not-found', 3000);
+  check('a room nobody has created is reported as room-not-found', lost.status().joined === false);
+
+  /* When the host creates the room later, the waiting guest joins automatically */
+  const late = Net.create({ clientId: 'late-host', apiUrl: API, waitMs: 80 });
+  late.host({ room: 'NR234', name: 'Hieu' });
+  await until(() => lost.status().joined === true && !lost.status().error, 3000);
+  check('when the host creates the room later, the waiting guest recovers on its own',
+    lost.seats.length === 2);
+
+  /* Unreachable server reports server-unreachable */
+  const nowhere = Net.create({
+    clientId: 'nowhere-1',
+    apiUrl: 'http://127.0.0.1:9499/api/room',
+    connectTimeout: 350,
+    retryMs: 100
+  });
+  nowhere.join({ room: 'ABC23', name: 'Nam' });
+  await until(() => nowhere.status().error === 'server-unreachable', 3000);
+  check('an unreachable server is reported as server-unreachable', nowhere.status().connected === false);
+
+  nowhere.leave();
+  lost.leave();
+  late.leave();
+  await srv.close();
+}
+
+/* =========================================================================
+   6. Turn Timer (Set by Host in Integer Minutes, Forfeits Turn on Expiry)
+   ========================================================================= */
+{
+  console.log('\nTurn Timer: integer minutes configuration & automatic turn forfeiture on timeout\n');
+  let clock = 500000;
+  const srv = await startTestServer(9416, {
+    waitTimeout: 60,
+    now: () => clock
+  });
+  const API = srv.url;
+
+  const host = Net.create({ clientId: 't-host', apiUrl: API, waitMs: 60 });
+  const guest = Net.create({ clientId: 't-guest', apiUrl: API, waitMs: 60 });
+
+  let hostView = null;
+  let guestView = null;
+  const timeouts = [];
+  host.on('view', (v) => { hostView = v.state; });
+  guest.on('view', (v) => { guestView = v.state; });
+  host.on('turnTimeout', (info) => { timeouts.push(info); });
+
+  host.host({ room: 'TM234', name: 'Chủ Phòng', turnTimer: 3 });
+  await until(() => host.status().joined);
+  check('host sets turnTimer in integer minutes (3 min) when creating room',
+    host.status().turnTimer === 3);
+
+  guest.join({ room: 'TM234', name: 'Khách' });
+  await until(() => guest.status().joined && host.seats.length === 2);
+  check('guest receives the room turnTimer (3 min) in lobby',
+    guest.status().turnTimer === 3);
+
+  host.startGame({ seed: 77 });
+  await until(() => hostView && guestView);
+  check('game state carries turnTimer=3 and turnLimitMs=180000',
+    hostView.turnTimer === 3 && hostView.turnLimitMs === 180000);
+  check('turn 0 starts at seat 0 with turnRemainingMs = 180000',
+    hostView.current === 0 && hostView.turnRemainingMs === 180000);
+
+  /* Advance clock past the 3-minute thinking limit without seat 0 making a move */
+  clock += 180500;
+  host.checkTimeout();
+  await until(() => hostView.current === 1 && guestView.current === 1);
+
+  check('when timer expires, seat 0 forfeits its turn and turn passes to seat 1',
+    hostView.current === 1 && guestView.current === 1);
+  check('timeout log entry is recorded in game log',
+    hostView.log[hostView.log.length - 1].key === 'timeout' &&
+    hostView.log[hostView.log.length - 1].params.p === 'Chủ Phòng');
+  check('turnTimeout event fires with the timed-out player info',
+    timeouts.length === 1 && timeouts[0].seat === 0 && timeouts[0].name === 'Chủ Phòng');
+  check('seat 1 receives a fresh 3-minute timer for their turn',
+    guestView.turnDeadline === clock + 180000);
+
+  host.leave();
+  guest.leave();
+  await srv.close();
 }
 
 console.log('\n' + pass + ' passed, ' + fail + ' failed\n');

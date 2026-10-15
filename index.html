@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#15121f">
-<meta name="description" content="Splendor — board game đá quý thời Phục hưng, chơi một người với máy hoặc nhiều người trên cùng thiết bị. Chạy trực tiếp trong trình duyệt.">
+<meta name="description" content="Splendor — board game đá quý thời Phục hưng, chơi một người với máy, nhiều người trên cùng thiết bị hoặc trực tuyến qua mạng.">
 <title>Splendor</title>
 <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
 <link rel="manifest" href="manifest.webmanifest">
@@ -54,15 +54,25 @@
       <div class="field">
         <span class="field-label" data-i18n="net.yourName"></span>
         <div class="name-row">
-          <input type="text" id="online-name" maxlength="14" autocomplete="nickname">
+          <input type="text" id="online-name" maxlength="16" autocomplete="nickname">
         </div>
       </div>
 
       <div class="field">
-        <span class="field-label" data-i18n="net.broker"></span>
-        <div class="seg" id="broker-seg" role="group"></div>
-        <input type="text" id="broker-url" class="broker-url" spellcheck="false" autocomplete="off">
-        <p class="hint" data-i18n="net.broker.hint"></p>
+        <span class="field-label" data-i18n="net.turnTimer"></span>
+        <div class="timer-setup-row">
+          <div class="timer-input-wrap">
+            <input type="number" id="online-timer" class="timer-input" min="1" max="60" step="1" value="2" inputmode="numeric">
+            <span class="timer-unit" data-i18n="net.minutesUnit"></span>
+          </div>
+          <div class="seg timer-presets" id="online-timer-presets" role="group">
+            <button type="button" class="seg-btn" data-mins="1">1p</button>
+            <button type="button" class="seg-btn is-on" data-mins="2">2p</button>
+            <button type="button" class="seg-btn" data-mins="3">3p</button>
+            <button type="button" class="seg-btn" data-mins="5">5p</button>
+          </div>
+        </div>
+        <small class="field-hint" data-i18n="net.turnTimerHint"></small>
       </div>
 
       <div class="online-actions">
@@ -144,6 +154,7 @@
         <button type="button" class="btn btn-sm" id="copy-link" data-i18n="net.copyLink"></button>
       </div>
       <p class="lobby-status" id="lobby-status"></p>
+      <div class="lobby-timer-badge" id="lobby-timer-badge"></div>
     </header>
 
     <div class="panel">
@@ -171,6 +182,7 @@
     <div class="turn-info">
       <span class="round-chip" id="round-chip"></span>
       <span class="turn-name" id="turn-name"></span>
+      <span class="turn-timer" id="turn-timer" hidden></span>
     </div>
     <div class="topbar-right">
       <span class="net-chip" id="net-chip" hidden></span>
@@ -223,7 +235,6 @@
 <script src="assets/js/i18n.js"></script>
 <script src="assets/js/engine.js"></script>
 <script src="assets/js/ai.js"></script>
-<script src="assets/js/mqtt-lite.js"></script>
 <script src="assets/js/net.js"></script>
 <script src="assets/js/ui.js"></script>
 <script src="assets/js/tutorial.js"></script>

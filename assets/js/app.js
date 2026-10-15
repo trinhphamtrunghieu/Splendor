@@ -1,5 +1,6 @@
 /* Splendor — application controller: menus, turn loop, persistence.
- * Everything runs in the browser; there is no server of any kind. */
+ * Offline games run in the browser; online games are refereed by the Vercel
+ * server (`/api/room`). */
 (function (global) {
   'use strict';
 
@@ -25,10 +26,12 @@
     discardSel: {},
     curtainAck: null,
     aiTimer: null,
-    net: null,                // the MQTT room, when playing online
-    role: null,               // 'host' | 'guest'
+    countdownTimer: null,
+    lastTimeoutCheckAt: 0,
+    net: null,                // the authoritative server room, when playing online
+    role: null,               // 'host' | 'guest' (dynamically updated on host failover)
     seat: -1,                 // my seat in an online game
-    pending: false,           // an intent is in flight to the host
+    pending: false,           // an intent is in flight to the server
     unread: 0,                // chat heard while the player was not looking
     roster: null,             // last seen seats, to report a name that changed
     roomPhase: null,          // last seen room phase, to notice the deal
@@ -39,8 +42,8 @@
       count: { single: 2, multi: 2 },
       difficulty: 'normal',
       tutorialDone: false,
-      broker: Net.BROKERS[0].url,
       onlineName: '',
+      turnTimer: 2,
       names: { single: [], multi: [] }
     }
   };
@@ -62,23 +65,20 @@
 
   function saveGame() {
     if (!App.state) return;
-    if (App.mode === 'tutorial') return;      // keep the player's real save intact
+    if (App.mode === 'tutorial') return;
     if (App.mode === 'online') {
-      // Only the host holds the real game; guests can always be re-sent theirs.
-      if (App.role !== 'host') return;
+      /* The server holds the authoritative game state; each tab only needs the
+         room code to rejoin its seat after a reload. */
       if (App.state.phase === 'gameover') { session(ONLINE_KEY, null); return; }
-      session(ONLINE_KEY, {
-        role: 'host', room: App.net && App.net.room, brokerUrl: App.settings.broker,
-        seats: App.net ? App.net.seats : [], state: App.state
-      });
+      if (App.net && App.net.room) {
+        session(ONLINE_KEY, { room: App.net.room });
+      }
       return;
     }
     if (App.state.phase === 'gameover') { drop(SAVE_KEY); return; }
     store(SAVE_KEY, { mode: App.mode, state: App.state });
   }
 
-  /* Per tab, not per browser: two tabs on one machine are two players, and a
-     refresh in either keeps its own seat. */
   function session(key, value) {
     try {
       if (value === undefined) return JSON.parse(sessionStorage.getItem(key));
@@ -100,8 +100,6 @@
 
   function $(id) { return document.getElementById(id); }
 
-  /* Exactly one screen is ever visible. Switching them by hand is how the
-     lobby ended up still on screen underneath a running game. */
   function showScreen(id) {
     Array.prototype.forEach.call(document.querySelectorAll('.screen'), function (screen) {
       screen.classList.toggle('is-active', screen.id === id);
@@ -171,11 +169,10 @@
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(text).then(done, done);
     } else {
-      done();                            // clipboard blocked: the value is on screen anyway
+      done();
     }
   }
 
-  /* A link is easier to send than five characters read out loud. */
   function roomLink(code) {
     return location.origin + location.pathname + '?room=' + encodeURIComponent(code);
   }
@@ -187,32 +184,40 @@
     return Net.isValidCode(code) ? code : null;
   }
 
+  function syncOnlineTimerUI(mins) {
+    var timerInput = $('online-timer');
+    if (timerInput && document.activeElement !== timerInput) {
+      timerInput.value = String(mins);
+    }
+    var presets = $('online-timer-presets');
+    if (presets) {
+      Array.prototype.forEach.call(presets.querySelectorAll('.seg-btn'), function (btn) {
+        btn.classList.toggle('is-on', +btn.dataset.mins === +mins);
+      });
+    }
+  }
+
+  function readOnlineTimerMinutes() {
+    var timerInput = $('online-timer');
+    if (!timerInput) return Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    var raw = String(timerInput.value || '').trim();
+    if (!/^\d+$/.test(raw)) return null;
+    var n = Number(raw);
+    if (!Number.isInteger(n) || n < 1 || n > 60) return null;
+    return n;
+  }
+
   function renderOnlineSetup() {
     $('online-setup').hidden = false;
     $('setup').hidden = true;
-    /* Pre-filled so the field is never blank, but not saved: whether the
-       player has actually chosen a name decides if an invite link may skip
-       straight into the room. */
     $('online-name').value = (App.settings.onlineName || '').trim() || t('menu.you');
-    $('broker-url').value = App.settings.broker || Net.BROKERS[0].url;
-    buildSeg($('broker-seg'), Net.BROKERS.map(function (b) { return b.id; }), brokerId(),
-      function (id) {
-        var found = Net.BROKERS.filter(function (b) { return b.id === id; })[0];
-        return found ? found.label : id;
-      },
-      function (id) {
-        var found = Net.BROKERS.filter(function (b) { return b.id === id; })[0];
-        if (found) { App.settings.broker = found.url; saveSettings(); renderOnlineSetup(); }
-      });
+    var mins = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    App.settings.turnTimer = mins;
+    if ($('online-timer')) $('online-timer').value = String(mins);
+    syncOnlineTimerUI(mins);
     Array.prototype.forEach.call(document.querySelectorAll('.mode-card'), function (card) {
       card.classList.toggle('is-on', card.dataset.mode === 'online');
     });
-  }
-
-  function brokerId() {
-    var url = App.settings.broker;
-    var found = Net.BROKERS.filter(function (b) { return b.url === url; })[0];
-    return found ? found.id : null;
   }
 
   function renderSetup() {
@@ -246,6 +251,7 @@
 
   function showMenu() {
     clearTimeout(App.aiTimer);
+    stopTurnCountdown();
     Tutorial.stop();
     document.body.classList.remove('is-curtained');
     showScreen('screen-menu');
@@ -253,10 +259,8 @@
     var saved = load(SAVE_KEY);
     $('resume-btn').hidden = !(saved && saved.state && saved.state.phase !== 'gameover');
 
-    // First visit: point newcomers at the walkthrough rather than the board.
-    var hosted = session(ONLINE_KEY);
-    $('resume-online-btn').hidden = !(hosted && hosted.room &&
-      (hosted.role === 'guest' || hosted.state));
+    var onlineSession = session(ONLINE_KEY);
+    $('resume-online-btn').hidden = !(onlineSession && onlineSession.room);
 
     var suggest = !App.settings.tutorialDone;
     $('tutorial-btn').classList.toggle('is-suggested', suggest);
@@ -332,8 +336,6 @@
     if (App.net) App.net.note(text);
   }
 
-  /* Who was sitting where last time the roster arrived, so a name that changes
-     can be reported as a change rather than silently replacing the old one. */
   function rosterSnapshot(seats) {
     return (seats || []).map(function (seat) { return seat.id + '\u0000' + seat.name; });
   }
@@ -368,8 +370,6 @@
       UI.renderChatList($('lobby-chat-log'), log);
       var canTalk = !!net && net.status().connected;
       var form = $('lobby-chat-form');
-      /* Only rebuild the form when it has to change: the player may be
-         halfway through typing a message while the roster updates. */
       if (form.dataset.enabled !== String(canTalk)) {
         form.innerHTML = UI.chatForm(Net.MAX_CHAT, canTalk);
         form.dataset.enabled = String(canTalk);
@@ -416,10 +416,7 @@
     var wanted = Net.cleanName(input.value);
     if (!wanted) { UI.toast(t('net.renameEmpty'), 'error'); return; }
     if (!net.canRename()) { UI.toast(t('net.renameLocked'), 'error'); return; }
-    /* A guest's new name has to reach the host to mean anything, so saying it
-       worked while the socket is shut would be a lie. The host owns the roster
-       and republishes it on reconnect, so it may rename itself either way. */
-    if (App.role === 'guest' && !net.status().connected) {
+    if (!net.status().connected) {
       UI.toast(t('net.renameOffline'), 'error');
       return;
     }
@@ -430,8 +427,6 @@
       return;
     }
     net.rename(wanted);
-    /* Remember it, so the next room this player joins starts from the name
-       they actually go by. */
     App.settings.onlineName = wanted;
     saveSettings();
     var nameField = $('online-name');
@@ -445,11 +440,10 @@
     App.role = net.role;
 
     net.on('status', function () {
+      App.role = net.role;
       renderLobby();
       renderNetChip();
       renderChatBadge();
-      /* The turn line carries the connection warning, so it is stale until the
-         board is redrawn. */
       if (App.state && $('screen-game').classList.contains('is-active')) render();
     });
 
@@ -459,69 +453,114 @@
     });
 
     net.on('room', function (room) {
-      if (room.closed && App.role === 'guest') {
+      if (room.closed) {
         leaveOnline(t('net.hostClosed'));
         return;
       }
+      App.role = net.role;
       App.seat = net.mySeat();
       announceRosterChange(room.seats);
       if (App.roomPhase === 'lobby' && room.phase === 'playing') systemNote(t('chat.started'));
       App.roomPhase = room.phase;
       renderLobby();
       renderNetChip();
-      // A guest with no game yet sits in the lobby until the host starts.
-      if (App.role === 'guest' && room.phase === 'lobby' && App.state) {
+      if (room.phase === 'lobby' && App.state) {
         App.state = null;
         showLobby();
+      } else if (App.state && $('screen-game').classList.contains('is-active')) {
+        render();
+      }
+    });
+
+    net.on('hostChanged', function (info) {
+      App.role = net.role;
+      if (info && info.name) {
+        systemNote(t('chat.hostChanged', { p: info.name }));
+      }
+      if (info && info.to === net.clientId) {
+        UI.toast(t('net.youAreHost'), 'good');
+      }
+      renderLobby();
+      if (App.state && $('screen-game').classList.contains('is-active')) render();
+    });
+
+    net.on('turnTimeout', function (info) {
+      if (info && info.name) {
+        UI.toast(t('log.timeout', { p: info.name }), 'error');
+        systemNote(t('chat.timeout', { p: info.name }));
       }
     });
 
     net.on('view', function (message) {
-      if (App.role !== 'guest' || !message.state) return;
+      if (!message || !message.state) return;
+      var wasOver = App.state && App.state.phase === 'gameover';
+      var prevTurnKey = App.state ? (App.state.turnCount + ':' + App.state.current) : null;
+      var nextTurnKey = message.state.turnCount + ':' + message.state.current;
+      var turnChanged = prevTurnKey !== null && prevTurnKey !== nextTurnKey;
       App.seat = message.seat;
       App.state = message.state;
       App.pending = false;
-      if (!$('screen-game').classList.contains('is-active')) enterGame();
-      syncGuest();
+      if (turnChanged) {
+        App.picked = [];
+        App.discardSel = {};
+      }
+      saveGame();
+      if (!$('screen-game').classList.contains('is-active')) {
+        showScreen('screen-game');
+        UI.closeModal();
+        applyI18n();
+      } else if ((wasOver && App.state.phase !== 'gameover') || (turnChanged && App.state.phase !== 'gameover' && !chatOpen())) {
+        UI.closeModal();
+      }
+      syncOnlineBoard();
     });
 
-    net.on('intent', function (message) {
-      if (App.role !== 'host' || !App.state) return;
-      var seat = net.seatOf(message.id);
-      if (seat < 0 || seat !== App.state.current) return;      // not their turn
-      var result = E.applyAction(App.state, message.action);
-      if (!result.ok) { net.broadcast(App.state); return; }    // refused: re-sync them
-      App.picked = [];
-      step();
+    net.on('actionError', function (info) {
+      App.pending = false;
+      if (info && info.error) {
+        UI.toast(t(info.error, info.params), 'error');
+      }
+      if (App.state) render();
     });
 
-    net.on('hostgone', function () {
-      UI.toast(t('net.err.hostGone'), 'error');
-      renderLobby();
-      renderNetChip();
-    });
-
-    net.on('seated', function () { renderLobby(); });
-    net.on('left', function (info) {
-      var seat = App.net.seats[info.seat];
-      if (seat) {
-        UI.toast(t('net.playerLeft', { p: seat.name }));
-        systemNote(t('chat.left', { p: seat.name }));
+    net.on('seated', function (info) {
+      if (info && info.rejoined && info.clientId !== net.clientId) {
+        var seat = net.seats[info.seat];
+        if (seat) {
+          UI.toast(t('net.playerRejoined', { p: seat.name }), 'good');
+          systemNote(t('chat.rejoined', { p: seat.name }));
+        }
       }
       renderLobby();
     });
+
+    net.on('left', function (info) {
+      var seat = App.net && App.net.seats[info.seat];
+      var name = (seat && seat.name) || info.name;
+      if (name) {
+        UI.toast(t('net.playerLeft', { p: name }));
+        systemNote(t('chat.left', { p: name }));
+      }
+      renderLobby();
+      if (App.state && $('screen-game').classList.contains('is-active')) render();
+    });
+
     net.on('rejected', function (message) {
       leaveOnline(t(message.reason === 'full' ? 'net.roomFull' : 'net.roomInProgress'));
     });
   }
 
-  /* A guest never runs the engine; it renders what the host sent and opens
-     whichever prompt the state says is ours to answer. */
-  function syncGuest() {
+  /* Renders the authoritative state received from `/api/room` and opens any
+     modal prompt (discard / noble / gameover) required for the local seat. */
+  function syncOnlineBoard() {
     var state = App.state;
     if (!state) return;
     render();
-    if (state.phase === 'gameover') { UI.gameOverModal(state); return; }
+    if (state.phase === 'gameover') {
+      document.body.classList.remove('is-curtained');
+      UI.gameOverModal(state, { online: true, isHost: App.net && App.net.isHost() });
+      return;
+    }
     if (!UI.isModalOpen()) {
       if (state.phase === 'noble' && canAct()) UI.nobleModal(state);
       else if (state.phase === 'discard' && canAct()) {
@@ -531,30 +570,35 @@
     }
   }
 
-  function hostRoom(resume) {
+  function hostRoom(resumeCode) {
+    var mins = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+    if (!resumeCode) {
+      var parsed = readOnlineTimerMinutes();
+      if (parsed === null) {
+        UI.toast(t('net.badTimer'), 'error');
+        if ($('online-timer')) $('online-timer').focus();
+        return;
+      }
+      mins = parsed;
+      App.settings.turnTimer = mins;
+      saveSettings();
+    }
+
     var net = Net.create({ clientId: clientId() });
     attachNet(net);
     App.mode = 'online';
     App.role = 'host';
     App.picked = [];
     App.pending = false;
-
-    net.host({
-      room: resume && resume.room,
-      name: onlineName(),
-      brokerUrl: App.settings.broker
-    });
-    if (resume && resume.seats && resume.seats.length) net.seats = resume.seats.slice();
-    if (resume && resume.state) {
-      App.state = resume.state;
-      net.setState(App.state);
-      App.seat = net.mySeat();
-      enterGame();
-      step();
-      return;
-    }
     App.state = null;
     App.seat = 0;
+
+    net.host({
+      room: resumeCode || null,
+      name: onlineName(),
+      turnTimer: mins
+    });
+    session(ONLINE_KEY, { room: net.room });
     showLobby();
   }
 
@@ -566,28 +610,21 @@
     App.state = null;
     App.picked = [];
     App.pending = false;
-    net.join({ room: code, name: onlineName(), brokerUrl: App.settings.broker });
-    session(ONLINE_KEY, { role: 'guest', room: Net.normaliseCode(code), brokerUrl: App.settings.broker });
+    net.join({ room: code, name: onlineName() });
+    session(ONLINE_KEY, { room: Net.normaliseCode(code) });
     showLobby();
   }
 
   function startOnlineGame() {
     var net = App.net;
-    if (!net || App.role !== 'host') return;
+    if (!net || !net.isHost()) return;
     if (net.seats.length < 2) { UI.toast(t('net.needTwo'), 'error'); return; }
-    App.state = E.createGame({
-      players: net.seats.map(function (seat) {
-        return { name: seat.name, type: seat.type, difficulty: seat.difficulty };
-      })
-    });
-    net.setState(App.state);
-    App.seat = net.mySeat();
     App.picked = [];
-    enterGame();
-    step();
+    net.startGame();
   }
 
   function leaveOnline(message) {
+    stopTurnCountdown();
     if (App.net) App.net.leave();
     App.net = null;
     App.roster = null;
@@ -604,38 +641,32 @@
 
   function showLobby() {
     clearTimeout(App.aiTimer);
+    stopTurnCountdown();
     Tutorial.stop();
     showScreen('screen-lobby');
     applyI18n();
     renderLobby();
   }
 
-  /* What the lobby should say. Being connected to a broker is not the same as
-     being in a room, and neither is the same as the room having started — a
-     player stuck on any of those deserves to be told which. */
   function lobbyStatus(st) {
     if (st.error === 'room-full') return { text: t('net.roomFull'), cls: 'is-error' };
     if (st.error === 'room-in-progress') return { text: t('net.roomInProgress'), cls: 'is-error' };
-    if (st.error === 'broker-unreachable') {
-      return { text: t('net.err.brokerUnreachable', { url: shortBroker(st.brokerUrl) }), cls: 'is-error' };
+    if (st.error === 'server-unreachable' || st.error === 'broker-unreachable') {
+      return { text: t('net.err.serverUnreachable'), cls: 'is-error' };
     }
     if (st.error === 'room-not-found') {
       return { text: t('net.err.roomNotFound', { code: st.room }), cls: 'is-error' };
     }
-    if (st.hostGone) return { text: t('net.err.hostGone'), cls: 'is-error' };
     if (!st.connected) {
       var retry = /^reconnect-(\d+)$/.exec(st.notice || '');
       if (retry) return { text: t('net.reconnecting', { n: retry[1] }), cls: '' };
       return { text: t('net.connecting'), cls: '' };
     }
-    if (App.role === 'guest' && !st.joined) {
+    if (!st.joined) {
       return { text: t('net.searchingRoom', { code: st.room }), cls: '' };
     }
-    return { text: t(App.role === 'host' ? 'net.hostWaiting' : 'net.guestWaiting'), cls: 'is-ok' };
-  }
-
-  function shortBroker(url) {
-    return String(url || '').replace(/^wss?:\/\//, '').split('/')[0];
+    var isHost = st.hostId === st.clientId;
+    return { text: t(isHost ? 'net.hostWaiting' : 'net.guestWaiting'), cls: 'is-ok' };
   }
 
   function renderLobby() {
@@ -643,6 +674,7 @@
     var net = App.net;
     if (!net) return;
     var st = net.status();
+    var isHost = net.isHost();
 
     $('room-code-value').textContent = st.room || '—';
     var share = $('room-share');
@@ -655,12 +687,16 @@
     var line = lobbyStatus(st);
     $('lobby-status').textContent = line.text;
     $('lobby-status').className = 'lobby-status' + (line.cls ? ' ' + line.cls : '');
+    var timerBadge = $('lobby-timer-badge');
+    if (timerBadge) {
+      timerBadge.textContent = '⏱ ' + t('net.lobbyTimer', { n: st.turnTimer || App.settings.turnTimer || 2 });
+    }
 
     var seats = st.seats.length ? st.seats : [];
     $('seat-list').innerHTML = seats.map(function (seat, index) {
       var tags = [];
       if (seat.id === st.clientId) tags.push(t('game.you'));
-      if (seat.id === net.hostId) tags.push(t('net.host'));
+      if (seat.id === st.hostId) tags.push(t('net.host'));
       if (seat.type === 'ai') tags.push(t('game.ai'));
       return '<div class="seat' + (seat.online ? '' : ' is-off') + '">' +
         '<span class="player-dot" style="background:' + UI.PLAYER_COLORS[index % 4] + '"></span>' +
@@ -671,33 +707,27 @@
           ? '<button type="button" class="btn btn-sm seat-rename" data-lobby="rename">' +
             t('net.rename') + '</button>'
           : '') +
-        (App.role === 'host' && seat.id !== st.clientId
+        (isHost && seat.id !== st.clientId
           ? '<button type="button" class="seat-kick" data-kick="' + seat.id + '" aria-label="remove">×</button>'
           : '') +
         '</div>';
     }).join('') || '<p class="empty-note">—</p>';
 
     var actions = [];
-    if (st.error === 'broker-unreachable' || st.error === 'room-not-found') {
-      actions.push('<button type="button" class="btn btn-primary" data-lobby="broker">' +
-        t('net.changeBroker') + '</button>');
-    }
-    if (App.role === 'host') {
+    if (isHost) {
       if (seats.length < Net.MAX_SEATS) {
         actions.push('<button type="button" class="btn" data-lobby="bot">' + t('net.addBot') + '</button>');
       }
       actions.push('<button type="button" class="btn btn-primary" data-lobby="start"' +
         (seats.length >= 2 && st.connected ? '' : ' disabled') + '>' + t('net.start') + '</button>');
     }
+    var humanSeats = seats.filter(function (s) { return s.type === 'human'; });
     actions.push('<button type="button" class="btn btn-danger" data-lobby="leave">' +
-      t(App.role === 'host' ? 'net.closeRoom' : 'net.leaveRoom') + '</button>');
+      t(isHost && humanSeats.length <= 1 ? 'net.closeRoom' : 'net.leaveRoom') + '</button>');
     $('lobby-actions').innerHTML = actions.join('');
     renderChat();
   }
 
-  /* What is wrong with the connection right now, in words, or null when the
-     room can hear us. The turn line carries it, because a player who cannot
-     reach the room cannot take their turn either. */
   function netWarning() {
     if (App.mode !== 'online' || !App.net) return null;
     var st = App.net.status();
@@ -705,7 +735,6 @@
       var retry = /^reconnect-(\d+)$/.exec(st.notice || '');
       return retry ? t('net.reconnecting', { n: retry[1] }) : t('net.connecting');
     }
-    if (st.hostGone) return t('net.err.hostGone');
     return null;
   }
 
@@ -715,23 +744,101 @@
     if (App.mode !== 'online' || !App.net) { chip.hidden = true; return; }
     var st = App.net.status();
     chip.hidden = false;
-    var healthy = st.connected && !st.hostGone;
+    var healthy = st.connected;
     chip.className = 'net-chip ' + (healthy ? 'is-on' : 'is-off');
-    /* When all is well the chip is just the room code, which a phone hides to
-       leave room for the buttons. When something is wrong the warning is what
-       matters, so the code steps aside for it. */
-    chip.textContent = !st.connected ? t('net.offline')
-      : st.hostGone ? t('net.hostGoneShort')
-      : st.room;
+    chip.textContent = !st.connected ? t('net.offline') : st.room;
   }
 
   /* ---------------------------------------------------------- drawing */
 
-  /* Which seat the screen belongs to: mine when online, the player at the
-     device otherwise. Drives affordability outlines and the tray. */
   function viewerSeat() {
     if (App.mode === 'online' && App.seat >= 0) return App.seat;
     return App.state ? App.state.current : 0;
+  }
+
+  function isCurrentSeatOffline() {
+    if (App.mode !== 'online' || !App.net || !App.state) return false;
+    var seatInfo = App.net.seats[App.state.current];
+    return !!(seatInfo && !seatInfo.online && !seatInfo.botTakeover && seatInfo.type === 'human');
+  }
+
+  function remainingTurnMs(state) {
+    if (!state || state.phase === 'gameover' || !state.turnLimitMs) return null;
+    var deadline = state.clientDeadline != null ? state.clientDeadline : state.turnDeadline;
+    if (!deadline) return null;
+    return Math.max(0, deadline - Date.now());
+  }
+
+  function turnTimerInfo(state) {
+    var ms = remainingTurnMs(state);
+    if (ms === null) return null;
+    var cls = ms <= 10000 ? 'is-critical' : (ms <= 30000 ? 'is-low' : '');
+    return {
+      ms: ms,
+      text: UI.formatTimer(ms),
+      cls: cls
+    };
+  }
+
+  function stopTurnCountdown() {
+    if (App.countdownTimer) {
+      clearInterval(App.countdownTimer);
+      App.countdownTimer = null;
+    }
+  }
+
+  function updateTurnTimerDOM() {
+    var state = App.state;
+    var topTimer = $('turn-timer');
+    var info = turnTimerInfo(state);
+    if (!info) {
+      if (topTimer) topTimer.hidden = true;
+      stopTurnCountdown();
+      return;
+    }
+    if (topTimer) {
+      topTimer.hidden = false;
+      topTimer.textContent = '⏱ ' + info.text;
+      topTimer.className = 'turn-timer' + (info.cls ? ' ' + info.cls : '');
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('[data-turn-timer]'), function (el) {
+      el.textContent = '⏱ ' + info.text;
+      var base = el.classList.contains('player-timer') ? 'player-timer' : 'turn-line-timer';
+      el.className = base + (info.cls ? ' ' + info.cls : '');
+    });
+
+    if (info.ms <= 0 && state && state.phase !== 'gameover') {
+      var now = Date.now();
+      if (App.mode === 'online' && App.net) {
+        if (now - (App.lastTimeoutCheckAt || 0) > 1100) {
+          App.lastTimeoutCheckAt = now;
+          App.net.checkTimeout();
+        }
+      } else if (state.turnLimitMs > 0) {
+        var timedOutName = E.currentPlayer(state).name;
+        if (E.timeoutTurn(state).ok) {
+          App.picked = [];
+          App.discardSel = {};
+          UI.closeModal();
+          UI.toast(t('log.timeout', { p: timedOutName }), 'error');
+          step();
+        }
+      }
+    }
+  }
+
+  function ensureTurnCountdown() {
+    var state = App.state;
+    if (!state || state.phase === 'gameover' || !state.turnLimitMs) {
+      stopTurnCountdown();
+      var topTimer = $('turn-timer');
+      if (topTimer) topTimer.hidden = true;
+      return;
+    }
+    updateTurnTimerDOM();
+    if (!App.countdownTimer) {
+      App.countdownTimer = setInterval(updateTurnTimerDOM, 250);
+    }
   }
 
   function render() {
@@ -739,6 +846,9 @@
     if (!state) return;
     var player = E.currentPlayer(state);
     var isHumanTurn = player.type === 'human' && state.phase !== 'gameover' && canAct();
+    var turnOffline = isCurrentSeatOffline();
+    var canBotTakeover = turnOffline && App.net && App.net.isHost() && state.phase !== 'gameover';
+    var timerInfo = turnTimerInfo(state);
 
     $('round-chip').textContent = t('game.round', { n: state.round });
     var dot = '<span class="dot" style="background:' + UI.PLAYER_COLORS[state.current % 4] + '"></span>';
@@ -757,21 +867,28 @@
     UI.renderTurnLine($('turn-line'), state, {
       canAct: myTurn,
       viewer: viewer,
-      /* Hot seat: say the name, since the device is passed around. */
       namedTurn: App.mode === 'multi' && humanCount(state) > 1,
       warning: netWarning(),
-      blocked: netBlocked()
+      blocked: netBlocked(),
+      turnOffline: turnOffline,
+      timerText: timerInfo ? timerInfo.text : null,
+      timerClass: timerInfo ? timerInfo.cls : ''
     });
     UI.renderPlayers($('players'), state, {
       revealIndex: App.mode === 'online' ? viewer : (isHumanTurn ? state.current : -1),
-      youIndex: App.mode === 'single' ? 0 : (App.mode === 'online' ? viewer : -1)
+      youIndex: App.mode === 'single' ? 0 : (App.mode === 'online' ? viewer : -1),
+      seats: App.mode === 'online' && App.net ? App.net.seats : null,
+      hostId: App.mode === 'online' && App.net ? App.net.hostId : null,
+      timerText: timerInfo ? timerInfo.text : null,
+      timerClass: timerInfo ? timerInfo.cls : ''
     });
-    UI.renderTray($('tray'), state, App.picked, isHumanTurn, viewer);
+    UI.renderTray($('tray'), state, App.picked, isHumanTurn, viewer, {
+      canBotTakeover: canBotTakeover
+    });
     $('take-hint').textContent = t('action.takeHint');
     renderChatBadge();
+    ensureTurnCountdown();
 
-    // Card nodes are replaced on every draw, so the coach marks have to be
-    // re-anchored here rather than only when a turn ends.
     if (Tutorial.isActive()) Tutorial.refresh();
   }
 
@@ -780,7 +897,10 @@
   function step() {
     var state = App.state;
     if (!state) return;
-    if (App.mode === 'online' && App.role === 'host' && App.net) App.net.broadcast(state);
+    if (App.mode === 'online') {
+      syncOnlineBoard();
+      return;
+    }
     saveGame();
     render();
 
@@ -790,11 +910,10 @@
       return;
     }
 
-
     var player = E.currentPlayer(state);
 
     if (state.phase === 'noble') {
-      if (player.type === 'ai' && hostControls()) {
+      if (player.type === 'ai') {
         E.chooseNoble(state, AI.chooseNoble(state));
         step();
       } else if (canAct()) {
@@ -804,7 +923,7 @@
     }
 
     if (state.phase === 'discard') {
-      if (player.type === 'ai' && hostControls()) {
+      if (player.type === 'ai') {
         AI.discard(state, profileFor(player));
         step();
       } else if (canAct()) {
@@ -814,16 +933,14 @@
       return;
     }
 
-    // Normal play.
-    if (player.type === 'ai' && hostControls()) {
+    if (player.type === 'ai') {
       document.body.classList.remove('is-curtained');
       clearTimeout(App.aiTimer);
       App.aiTimer = setTimeout(aiMove, SPEEDS[App.settings.speed] || SPEEDS.normal);
       return;
     }
 
-    if (Tutorial.isActive()) return;          // solo board, no handover
-    if (App.mode === 'online') { document.body.classList.remove('is-curtained'); return; }
+    if (Tutorial.isActive()) return;
 
     if (needsCurtain()) {
       document.body.classList.add('is-curtained');
@@ -831,11 +948,6 @@
       return;
     }
     document.body.classList.remove('is-curtained');
-  }
-
-  /* Bots and turn resolution are the host's job; guests only render. */
-  function hostControls() {
-    return App.mode !== 'online' || App.role === 'host';
   }
 
   function needsCurtain() {
@@ -859,7 +971,6 @@
     var result = action ? E.applyAction(state, action) : { ok: false };
 
     if (!result.ok) {
-      // Should not happen, but never leave the game wedged on a bot's turn.
       var fallback = E.legalActions(state)[0];
       if (fallback) E.applyAction(state, fallback);
     }
@@ -868,38 +979,32 @@
     step();
   }
 
-  /* Can the person at this screen act right now? Online that means the turn is
-     on their seat; offline it means the turn is on a human rather than a bot. */
+  /* Can the person at this screen act right now? */
   function canAct() {
     var state = App.state;
     if (!state || state.phase === 'gameover') return false;
     if (App.mode === 'online') {
       if (App.seat < 0 || state.current !== App.seat || App.pending) return false;
-      /* A guest plays by asking the host, so a guest that cannot reach the
-         room cannot move: without this the board stays live, the player picks
-         gems, and the move is dropped into a closed socket. The host is the
-         referee and applies its own moves locally, so it plays on and the
-         others catch up when it reconnects. */
-      return App.role !== 'guest' || !netBlocked();
+      return !netBlocked();
     }
     return E.currentPlayer(state).type === 'human';
   }
 
-  /* True when this player's moves cannot reach the referee. */
+  /* True when this player's moves cannot reach the server referee. */
   function netBlocked() {
-    if (App.mode !== 'online' || !App.net || App.role !== 'guest') return false;
+    if (App.mode !== 'online' || !App.net) return false;
     var st = App.net.status();
     return !st.connected || st.hostGone;
   }
 
   /* Every move the local player makes goes through here: applied directly when
-     offline or hosting, relayed to the host when a guest. */
+     offline, sent to the Vercel server referee when online. */
   function perform(action) {
     var state = App.state;
     if (!state) return;
     if (!canAct()) { UI.toast(t('net.notYourTurn'), 'error'); return; }
 
-    if (App.mode === 'online' && App.role === 'guest') {
+    if (App.mode === 'online') {
       App.pending = true;
       App.net.sendIntent(action);
       App.picked = [];
@@ -922,7 +1027,7 @@
   function toggleToken(color) {
     var state = App.state;
     if (state.phase !== 'play' || E.currentPlayer(state).type !== 'human') return;
-    if (!canAct()) {                     // not your turn: the gems do not move
+    if (!canAct()) {
       UI.toast(t('net.notYourTurn'), 'error');
       return;
     }
@@ -935,7 +1040,7 @@
       if (state.tokens[color] <= 0) return;
       picked.push(color);
     } else if (mine === 1) {
-      if (picked.length === 1 && state.tokens[color] >= 4) picked.push(color);   // second of a pair
+      if (picked.length === 1 && state.tokens[color] >= 4) picked.push(color);
       else picked.splice(picked.indexOf(color), 1);
     } else {
       App.picked = [];
@@ -990,9 +1095,7 @@
     $('resume-online-btn').addEventListener('click', function () {
       var saved = session(ONLINE_KEY);
       if (!saved || !saved.room) { showMenu(); return; }
-      App.settings.broker = saved.brokerUrl || App.settings.broker;
-      if (saved.role === 'host') hostRoom(saved);
-      else joinRoom(saved.room);        // the retained view puts us straight back
+      joinRoom(saved.room);
     });
 
     $('resume-btn').addEventListener('click', function () {
@@ -1012,11 +1115,37 @@
       App.settings.onlineName = $('online-name').value;
       saveSettings();
     });
-    $('broker-url').addEventListener('change', function () {
-      App.settings.broker = $('broker-url').value.trim();
-      saveSettings();
-      renderOnlineSetup();
-    });
+    if ($('online-timer')) {
+      $('online-timer').addEventListener('input', function () {
+        var parsed = readOnlineTimerMinutes();
+        if (parsed !== null) {
+          App.settings.turnTimer = parsed;
+          saveSettings();
+          syncOnlineTimerUI(parsed);
+        } else {
+          syncOnlineTimerUI(-1);
+        }
+      });
+      $('online-timer').addEventListener('blur', function () {
+        var parsed = readOnlineTimerMinutes();
+        if (parsed === null) {
+          var fallback = Net.cleanTurnTimer(App.settings.turnTimer, 2);
+          $('online-timer').value = String(fallback);
+          syncOnlineTimerUI(fallback);
+        }
+      });
+    }
+    if ($('online-timer-presets')) {
+      $('online-timer-presets').addEventListener('click', function (event) {
+        var btn = event.target.closest('.seg-btn');
+        if (!btn) return;
+        var mins = Net.cleanTurnTimer(btn.dataset.mins, 2);
+        App.settings.turnTimer = mins;
+        saveSettings();
+        if ($('online-timer')) $('online-timer').value = String(mins);
+        syncOnlineTimerUI(mins);
+      });
+    }
     $('join-code').addEventListener('input', function () {
       $('join-code').value = Net.normaliseCode($('join-code').value);
     });
@@ -1028,10 +1157,6 @@
     });
     $('online-back').addEventListener('click', function () { $('online-setup').hidden = true; });
 
-    /* A phone keyboard's Go key has to work. The submit event alone is not
-       enough: with several text fields and no submit button, browsers block
-       implicit submission outright and Enter does nothing at all. So handle the
-       key, and keep the submit handler for the case where one does fire. */
     function submitOnline(event) {
       if (event) event.preventDefault();
       var raw = $('join-code').value.trim();
@@ -1070,23 +1195,9 @@
         startOnlineGame();
       } else if (action.dataset.lobby === 'leave') {
         leaveOnline(null);
-      } else if (action.dataset.lobby === 'broker') {
-        // Back to the setup panel with the fields intact, not out to the menu.
-        if (App.net) App.net.leave();
-        App.net = null;
-        App.role = null;
-        App.seat = -1;
-        App.state = null;
-        session(ONLINE_KEY, null);
-        showMenu();
-        App.mode = 'online';
-        renderOnlineSetup();
-        $('broker-url').focus();
       }
     });
 
-    /* The chat form is rebuilt whenever the lobby redraws, so the listener
-       goes on the screen rather than on the form itself. */
     $('screen-lobby').addEventListener('submit', function (event) {
       var form = event.target.closest('[data-chat-form]');
       if (!form) return;
@@ -1102,8 +1213,6 @@
       var state = App.state;
       if (!state) return;
 
-      // A modal owns the screen while it is open — the curtain and the
-      // discard/noble prompts must not be replaceable from underneath.
       if (UI.isModalOpen()) return;
       if (event.target.closest('#menu-btn')) { UI.menuModal(state); return; }
       if (event.target.closest('#nobles-btn')) { UI.noblesModal(state, viewerSeat()); return; }
@@ -1112,6 +1221,18 @@
 
       var sheet = event.target.closest('[data-sheet]');
       if (sheet) { openSheet(sheet.dataset.sheet); return; }
+
+      if (event.target.closest('#bot-takeover-btn')) {
+        if (App.mode === 'online' && App.net && App.net.isHost()) {
+          var targetPlayer = state.players[state.current];
+          App.net.botTakeover(state.current);
+          if (targetPlayer) {
+            UI.toast(t('net.botTookOver', { p: targetPlayer.name }));
+            systemNote(t('chat.botTakeover', { p: targetPlayer.name }));
+          }
+        }
+        return;
+      }
 
       var token = event.target.closest('[data-token]');
       if (token) { toggleToken(token.dataset.token); return; }
@@ -1141,9 +1262,6 @@
       if (deck) { UI.deckDetail(state, +deck.dataset.deck); return; }
     });
 
-    /* The nobles strip and the score chips are plain elements standing in for
-       buttons, so the keyboard has to be wired by hand: focusable without
-       being activatable is worse than not focusable at all. */
     $('screen-game').addEventListener('keydown', function (event) {
       if (event.key !== 'Enter' && event.key !== ' ') return;
       if (UI.isModalOpen() || !App.state) return;
@@ -1156,7 +1274,10 @@
 
   function openSheet(name) {
     if (name === 'nobles') UI.noblesModal(App.state, viewerSeat());
-    else UI.playersModal(App.state, viewerSeat());
+    else UI.playersModal(App.state, viewerSeat(), {
+      seats: App.mode === 'online' && App.net ? App.net.seats : null,
+      hostId: App.mode === 'online' && App.net ? App.net.hostId : null
+    });
   }
 
   function openChat() {
@@ -1229,8 +1350,6 @@
           step();
           break;
         case 'renameSave':
-          /* The form's submit handler does this, so that Enter in the field
-             and a tap on the button take exactly the same path. */
           break;
         case 'rules':
           UI.rulesModal();
@@ -1255,6 +1374,10 @@
           break;
         case 'rematch':
           UI.closeModal();
+          if (App.mode === 'online' && App.net) {
+            if (App.net.isHost()) App.net.rematch();
+            break;
+          }
           startGame();
           break;
         case 'freshGame':
@@ -1264,6 +1387,7 @@
           break;
         case 'toMenu':
           UI.closeModal();
+          if (App.net) { leaveOnline(null); break; }
           App.state = null;
           drop(SAVE_KEY);
           showMenu();
@@ -1271,8 +1395,6 @@
       }
     });
 
-    /* Both dialogs that contain a form live here. Submitting is what Enter in
-       a text field does, so it is the one path worth wiring. */
     root.addEventListener('submit', function (event) {
       var form = event.target.closest('form');
       if (!form) return;
@@ -1289,7 +1411,7 @@
   /* ------------------------------------------------------------- boot */
 
   function init() {
-    global.SplendorArt.inject();          // gem artwork must exist before any render
+    global.SplendorArt.inject();
     var saved = load(SETTINGS_KEY);
     if (saved) {
       Object.keys(App.settings).forEach(function (key) {
@@ -1310,11 +1432,17 @@
     wireModal();
     showMenu();
 
-    /* Opened from a shared link: fill the code in, and go straight in if we
-       already know what this player is called. */
+    /* Notify the server immediately when a tab is closed or reloaded so other
+       players don't have to wait for the heartbeat timeout to see the drop. */
+    global.addEventListener('pagehide', function () {
+      if (App.mode === 'online' && App.net) {
+        App.net.disconnect();
+      }
+    });
+
     var invited = roomFromUrl();
     if (invited) {
-      var named = !!(App.settings.onlineName || '').trim();   // read before the panel fills it
+      var named = !!(App.settings.onlineName || '').trim();
       App.mode = 'online';
       renderOnlineSetup();
       $('join-code').value = invited;
